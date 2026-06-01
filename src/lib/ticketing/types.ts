@@ -1,6 +1,6 @@
 export type SbtTier = 'none' | 'brown' | 'silver' | 'gold' | 'rainbow'
 
-export type PackKey = 'omega' | 'costume-pack'
+export type PackKey = 'omega' | 'eden' | 'costume-pack' | 'magma'
 
 export type PackCounts = Record<PackKey, number>
 
@@ -77,6 +77,7 @@ export interface OpenMonitorEntry {
   omega_pulls?: number
   eden_pulls?: number
   costume_pulls?: number
+  magma_pulls?: number
   raw_tickets?: number
   sbt?: SbtTier
   sbt_multiplier?: number

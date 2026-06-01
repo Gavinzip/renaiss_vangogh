@@ -65,9 +65,10 @@ export function buildLedgerFromOpenMonitor(data: OpenMonitorLuckyDrawResponse): 
     const packs: PackCounts = {
       ...emptyPackCounts(),
       omega: toInteger(row.omega_pulls),
+      eden: toInteger(row.eden_pulls),
       'costume-pack': toInteger(row.costume_pulls),
+      magma: toInteger(row.magma_pulls),
     }
-    const ignoredEdenPulls = toInteger(row.eden_pulls)
     const rawTickets = calculateRawTickets(packs)
     const inferredTier = getSbtTier(rawTickets)
     const sbt = inferredTier.tier
@@ -93,14 +94,9 @@ export function buildLedgerFromOpenMonitor(data: OpenMonitorLuckyDrawResponse): 
       ticketIntervals: [],
       firstBuybackAt: null,
       lastBuybackAt: null,
-      eventCount: packs.omega + packs['costume-pack'],
+      eventCount: Object.values(packs).reduce((sum, count) => sum + count, 0),
       dataWarnings: [
         'Open Monitor source is a maximum estimate and does not prove buyback completion.',
-        ...(ignoredEdenPulls > 0
-          ? [
-              `Open Monitor returned ${ignoredEdenPulls} Eden pulls, but the current published rules only count OMEGA and Costume Pack.`,
-            ]
-          : []),
       ],
     }
   })

@@ -34,6 +34,7 @@ function parseArgs(argv) {
     cacheDir: process.env.LUCKY_DRAW_CACHE_DIR || 'cache/lucky-draw',
     walletMigrationCacheTtlMinutes: 15,
     walletResolveCacheTtlMinutes: 24 * 60,
+    activityCacheTtlMinutes: 15,
     eventCacheOverlapBlocks: 200,
     out: 'public/lucky-draw-ledger.json',
     contracts: [],
@@ -66,6 +67,7 @@ function parseArgs(argv) {
     else if (arg === '--cache-dir') args.cacheDir = argv[++index] || args.cacheDir
     else if (arg === '--wallet-migration-cache-ttl-minutes') args.walletMigrationCacheTtlMinutes = toNumber(argv[++index])
     else if (arg === '--wallet-resolve-cache-ttl-minutes') args.walletResolveCacheTtlMinutes = toNumber(argv[++index])
+    else if (arg === '--activity-cache-ttl-minutes') args.activityCacheTtlMinutes = toNumber(argv[++index])
     else if (arg === '--event-cache-overlap-blocks') args.eventCacheOverlapBlocks = toNumber(argv[++index])
     else if (arg === '--out') args.out = argv[++index] || args.out
     else if (arg === '--contracts') args.contracts = parseAddressCsv(argv[++index])
@@ -107,8 +109,10 @@ function parseArgs(argv) {
   args.pageSize = Math.max(1, Math.min(1000, args.pageSize))
   args.walletMigrationCacheTtlMs = Math.max(0, args.walletMigrationCacheTtlMinutes) * 60 * 1000
   args.walletResolveCacheTtlMs = Math.max(0, args.walletResolveCacheTtlMinutes) * 60 * 1000
+  args.activityCacheTtlMs = Math.max(0, args.activityCacheTtlMinutes) * 60 * 1000
   args.walletMigrationCachePath = join(args.cacheDir, 'wallet-migrations.json')
   args.walletResolveCachePath = join(args.cacheDir, 'wallet-resolve.json')
+  args.activityCachePath = join(args.cacheDir, 'activities.json')
   args.eventCachePath = join(args.cacheDir, 'onchain-events.json')
   return args
 }
@@ -128,6 +132,7 @@ Options:
   --cache-dir <path>            Persistent API cache dir. Default cache/lucky-draw.
   --wallet-migration-cache-ttl-minutes <n>  Default 15.
   --wallet-resolve-cache-ttl-minutes <n>    Default 1440.
+  --activity-cache-ttl-minutes <n>          Renaiss activity cache TTL. Default 15.
   --event-cache-overlap-blocks <n> Re-scan last n cached blocks. Default 200.
   --contracts <csv>             Limit on-chain scan to specific contract addresses.
   --from-block <n>              Debug scan start block.
@@ -150,7 +155,7 @@ function emptyEntry(userAddress, sourceAddresses) {
     rank: 0,
     userAddress,
     sourceAddresses: [...sourceAddresses].filter(Boolean),
-    packs: { omega: 0, 'costume-pack': 0 },
+    packs: { omega: 0, eden: 0, 'costume-pack': 0, magma: 0 },
     baseTickets: 0,
     bonusTickets: 0,
     rawTickets: 0,
@@ -340,8 +345,10 @@ async function main() {
     notes: [
       'Official ledger path scans BSC contract logs directly, not a candidate wallet leaderboard.',
       'OMEGA buyback events count as 1 raw ticket.',
-      'Costume Pack buybacks are detected from legacy open events and count as 2 raw tickets.',
-      'Eden, RenaCrypt, Pack 7/9, and other packs are not counted unless the official rules change.',
+      'EDEN buyback events count as 3 raw tickets.',
+      'Costume Pack buybacks require a legacy pull checkout id matched to a buyback activity and count as 2 raw tickets.',
+      'MAGMA buybacks require a legacy pull checkout id matched to a buyback activity and count as 2 raw tickets.',
+      'RenaCrypt, Pack 7/9, and other packs are not counted unless the official rules change.',
       'Base ticket intervals are ordered by block number, transaction index, log index, timestamp, tx hash, then event id.',
       'SBT bonus tickets are deterministic and appended after event-backed tickets by first eligible event time, then address.',
       'Leaderboard rank is sorted by final tickets, then raw tickets, then first eligible event time.',

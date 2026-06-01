@@ -1,7 +1,17 @@
+import { createRenaissActivityFetcher } from './activity-source.mjs'
 import { blockByTimestamp, fetchLogsWindow } from './bscscan.mjs'
 import { readJsonCache, writeJsonCache } from './cache.mjs'
 import { CAMPAIGN_END, CAMPAIGN_START, PACK_EVENT_SOURCES } from './rules.mjs'
-import { hexToBigIntText, normalizeAddress, normalizeHash, toNumber, topicToAddress } from './utils.mjs'
+import {
+  hexToBigIntText,
+  mapWithConcurrency,
+  normalizeAddress,
+  normalizeHash,
+  toNumber,
+  topicToAddress,
+} from './utils.mjs'
+
+const BUYBACK_ACTIVITY_TYPES = new Set(['PerpetualBuybackActivity', 'BuybackActivity'])
 
 function sourceCacheKey(source) {
   return [
@@ -12,6 +22,7 @@ function sourceCacheKey(source) {
     source.topic3 || '',
     source.pack,
     source.ticketWeight,
+    source.eventKind === 'legacy-pack-open' ? 'checkout-v2' : '',
     CAMPAIGN_START,
     CAMPAIGN_END,
   ].join('|')
@@ -37,7 +48,7 @@ function dedupeEvents(events) {
   return sortEvents([...byKey.values()])
 }
 
-function decodeTicketEventLog(log, contractConfig) {
+function decodeBuybackEventLog(log, contractConfig) {
   const topics = Array.isArray(log.topics) ? log.topics : []
   const userAddress = topicToAddress(topics[1])
   const txHash = normalizeHash(log.transactionHash)
@@ -72,6 +83,126 @@ function decodeTicketEventLog(log, contractConfig) {
   }
 }
 
+function decodeLegacyPackOpenLog(log, contractConfig) {
+  const topics = Array.isArray(log.topics) ? log.topics : []
+  const userAddress = topicToAddress(topics[1])
+  const checkoutId = normalizeHash(topics[3])
+  const txHash = normalizeHash(log.transactionHash)
+  if (!userAddress || !checkoutId || !txHash) return null
+
+  const data = String(log.data || '').replace(/^0x/, '')
+  const words = data.match(/.{1,64}/g) || []
+  const priceInUsdt = words[0] ? BigInt(`0x${words[0]}`).toString() : null
+
+  return {
+    id: `${txHash}-${toNumber(log.logIndex)}`,
+    canonicalAddress: userAddress,
+    sourceAddress: userAddress,
+    txHash,
+    timestamp: toNumber(log.timeStamp),
+    blockNumber: toNumber(log.blockNumber),
+    transactionIndex: toNumber(log.transactionIndex),
+    logIndex: toNumber(log.logIndex),
+    ordinal: toNumber(log.logIndex),
+    contractAddress: normalizeAddress(log.address),
+    pack: contractConfig.pack,
+    ticketWeight: contractConfig.ticketWeight,
+    itemName: contractConfig.label,
+    eventKind: contractConfig.eventKind,
+    checkoutId,
+    tokenId: null,
+    priceInUsdt,
+    fmvPriceInUsd: null,
+    paymentToken: '',
+  }
+}
+
+function decodeTicketEventLog(log, contractConfig) {
+  if (contractConfig.eventKind === 'legacy-pack-open') return decodeLegacyPackOpenLog(log, contractConfig)
+  return decodeBuybackEventLog(log, contractConfig)
+}
+
+function buybackActivityFromRows(rows) {
+  const byCheckoutId = new Map()
+  for (const activity of rows) {
+    if (!BUYBACK_ACTIVITY_TYPES.has(activity?.__typename)) continue
+    const checkoutId = normalizeHash(activity.checkoutId)
+    const txHash = normalizeHash(activity.txHash)
+    const timestamp = toNumber(activity.timestamp)
+    if (!checkoutId || !txHash) continue
+    if (timestamp < CAMPAIGN_START || timestamp > CAMPAIGN_END) continue
+
+    const existing = byCheckoutId.get(checkoutId)
+    if (existing && toNumber(existing.timestamp) <= timestamp) continue
+    byCheckoutId.set(checkoutId, activity)
+  }
+  return byCheckoutId
+}
+
+async function matchLegacyBuybackEvents(openEvents, args, activityFetcher) {
+  if (!openEvents.length) {
+    return {
+      events: [],
+      checkedAddresses: 0,
+      matchedBuybacks: 0,
+      unmatchedOpens: 0,
+      activityStats: activityFetcher.stats,
+    }
+  }
+
+  const sourceAddresses = [...new Set(openEvents.map((event) => event.sourceAddress).filter(Boolean))]
+  const byAddress = new Map()
+  await mapWithConcurrency(sourceAddresses, Math.max(1, Math.min(4, args.resolveConcurrency)), async (address) => {
+    const rows = await activityFetcher.fetchActivities(address)
+    byAddress.set(address, buybackActivityFromRows(rows))
+  })
+
+  const matchedEvents = []
+  let unmatchedOpens = 0
+
+  for (const openEvent of openEvents) {
+    const checkoutId = normalizeHash(openEvent.checkoutId)
+    const buybackActivity = byAddress.get(openEvent.sourceAddress)?.get(checkoutId)
+    if (!buybackActivity) {
+      unmatchedOpens += 1
+      continue
+    }
+
+    const txHash = normalizeHash(buybackActivity.txHash)
+    const timestamp = toNumber(buybackActivity.timestamp)
+    const ordinal = toNumber(buybackActivity.ordinal) || openEvent.ordinal
+    matchedEvents.push({
+      ...openEvent,
+      id: String(buybackActivity.id || `${txHash}-${ordinal}`),
+      txHash,
+      timestamp,
+      blockNumber: toNumber(buybackActivity.blockNumber) || openEvent.blockNumber,
+      transactionIndex: 0,
+      logIndex: ordinal,
+      ordinal,
+      contractAddress: normalizeAddress(buybackActivity.contractAddress) || openEvent.contractAddress,
+      itemName: String(buybackActivity.item?.name || buybackActivity.itemName || openEvent.itemName),
+      eventKind: 'legacy-buyback-activity',
+      tokenId: buybackActivity.nftTokenId ? String(buybackActivity.nftTokenId) : openEvent.tokenId,
+      priceInUsdt: buybackActivity.priceInUsdt
+        ? String(buybackActivity.priceInUsdt)
+        : buybackActivity.amount
+          ? String(buybackActivity.amount)
+          : openEvent.priceInUsdt,
+      legacyOpenTxHash: openEvent.txHash,
+      legacyOpenTimestamp: openEvent.timestamp,
+    })
+  }
+
+  return {
+    events: matchedEvents,
+    checkedAddresses: sourceAddresses.length,
+    matchedBuybacks: matchedEvents.length,
+    unmatchedOpens,
+    activityStats: activityFetcher.stats,
+  }
+}
+
 export async function scanOnchainTicketEvents(args) {
   if (!args.bscscanApiKey) {
     throw new Error(
@@ -98,6 +229,7 @@ export async function scanOnchainTicketEvents(args) {
 
   const allEvents = []
   const scanStats = []
+  const activityFetcher = createRenaissActivityFetcher(args)
   const blockChunk = Math.max(100, toNumber(args.blockChunk) || 5000)
   const offset = Math.max(1, Math.min(1000, toNumber(args.pageSize) || 1000))
   const eventCachePath = args.noCache ? '' : args.eventCachePath
@@ -167,8 +299,6 @@ export async function scanOnchainTicketEvents(args) {
     }
 
     const sourceEvents = dedupeEvents([...cachedEvents, ...fetchedEvents])
-    allEvents.push(...sourceEvents)
-
     if (eventCachePath) {
       const retainedEvents = args.refreshCache
         ? []
@@ -188,7 +318,15 @@ export async function scanOnchainTicketEvents(args) {
         updatedAt: Date.now(),
         events: mergedCacheEvents,
       }
+      writeJsonCache(eventCachePath, eventCache)
     }
+
+    const legacyMatch =
+      contract.eventKind === 'legacy-pack-open'
+        ? await matchLegacyBuybackEvents(sourceEvents, args, activityFetcher)
+        : null
+    const ledgerEvents = legacyMatch ? legacyMatch.events : sourceEvents
+    allEvents.push(...ledgerEvents)
 
     scanStats.push({
       contract: contract.contract,
@@ -196,14 +334,21 @@ export async function scanOnchainTicketEvents(args) {
       pack: contract.pack,
       eventKind: contract.eventKind,
       calls,
-      events: sourceEvents.length,
+      events: ledgerEvents.length,
+      openEvents: legacyMatch ? sourceEvents.length : undefined,
+      matchedBuybacks: legacyMatch?.matchedBuybacks,
+      unmatchedOpens: legacyMatch?.unmatchedOpens,
+      checkedAddresses: legacyMatch?.checkedAddresses,
       cachedEvents: cachedEvents.length,
       fetchedEvents: fetchedEvents.length,
+      activityFetchedAddresses: legacyMatch?.activityStats.fetchedAddresses,
+      activityCachedAddresses: legacyMatch?.activityStats.cachedAddresses,
       cacheToBlock: eventCache.sources[cacheKey]?.toBlock ?? null,
     })
   }
 
   if (eventCachePath) writeJsonCache(eventCachePath, eventCache)
+  activityFetcher.writeCache()
 
   sortEvents(allEvents)
 

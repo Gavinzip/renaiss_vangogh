@@ -5,27 +5,34 @@ export const CAMPAIGN_END = 1781422200
 
 export const PACK_WEIGHTS: Record<PackKey, number> = {
   omega: 1,
+  eden: 3,
   'costume-pack': 2,
+  magma: 2,
 }
 
 export const PACK_LABELS: Record<PackKey, string> = {
   omega: 'OMEGA',
+  eden: 'EDEN',
   'costume-pack': 'Costume Pack',
+  magma: 'MAGMA',
 }
 
 export const PACK_CONTRACTS: Record<string, PackKey> = {
   '0x94e7732b0b2e7c51ffd0d56580067d9c2e2b7910': 'omega',
-  '0xaab5f5fa75437a6e9e7004c12c9c56cda4b4885a': 'costume-pack',
+  '0xfda4a907d23d9f24271bc47483c5b983831e325e': 'eden',
 }
 
 export const LEGACY_PACK_IDS: Record<string, PackKey> = {
   'legacy:0x6ab417f10cac2e525f9beb854e47a9672bbe06470014432b2cf271157c183332':
     'costume-pack',
+  'legacy:0x26a4c27796a0e13e0188178750ef4d8d1d3828eb1d7bfe02692bdbeeda1e677c': 'magma',
 }
 
 export const ZERO_PACK_COUNTS: PackCounts = {
   omega: 0,
+  eden: 0,
   'costume-pack': 0,
+  magma: 0,
 }
 
 export const SBT_TIERS: Array<{ tier: SbtTier; threshold: number; multiplier: number }> = [
@@ -88,14 +95,17 @@ export function packFromActivity(value: {
   packId?: string | null
   itemName?: string | null
 }): PackKey | null {
-  const byContract = packFromContract(value.contractAddress)
-  if (byContract) return byContract
   const byLegacy = packFromLegacyId(value.packId)
   if (byLegacy) return byLegacy
 
   const name = String(value.itemName || '').toLowerCase()
   if (name.includes('omega')) return 'omega'
+  if (name.includes('eden')) return 'eden'
   if (name.includes('costume')) return 'costume-pack'
+  if (name.includes('magma')) return 'magma'
+
+  const byContract = packFromContract(value.contractAddress)
+  if (byContract) return byContract
   return null
 }
 

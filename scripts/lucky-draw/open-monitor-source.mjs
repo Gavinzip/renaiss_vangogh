@@ -44,14 +44,17 @@ export async function loadOpenMonitorCandidates() {
 }
 
 function packFromActivity(activity) {
-  const contract = normalizeAddress(activity.contractAddress)
-  if (contract && PACK_CONTRACTS[contract]) return PACK_CONTRACTS[contract].pack
   const packId = String(activity.packId || activity.item?.packId || '').trim().toLowerCase()
   if (packId && LEGACY_PACK_IDS[packId]) return LEGACY_PACK_IDS[packId]
 
   const name = String(activity.item?.name || activity.itemName || '').toLowerCase()
   if (name.includes('omega')) return 'omega'
+  if (name.includes('eden')) return 'eden'
   if (name.includes('costume')) return 'costume-pack'
+  if (name.includes('magma')) return 'magma'
+
+  const contract = normalizeAddress(activity.contractAddress)
+  if (contract && PACK_CONTRACTS[contract]) return PACK_CONTRACTS[contract].pack
   return null
 }
 
