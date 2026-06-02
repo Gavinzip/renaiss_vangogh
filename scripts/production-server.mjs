@@ -3,7 +3,10 @@ import { copyFileSync, createReadStream, existsSync, mkdirSync, statSync } from 
 import { createServer } from 'node:http'
 import { extname, join, normalize, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
+import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
+import { createGzip } from 'node:zlib'
+import { buildLedgerSummary, findLedgerEntry, readLedgerPayload } from './raffle-ledger-api.mjs'
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const distDir = resolve(repoRoot, 'dist')
@@ -59,7 +62,15 @@ function contentType(path) {
   return 'application/octet-stream'
 }
 
-function sendFile(response, path, headers = {}) {
+function acceptsGzip(request) {
+  return /\bgzip\b/i.test(request.headers['accept-encoding'] || '')
+}
+
+function shouldCompress(path) {
+  return ['.css', '.html', '.js', '.json', '.svg'].includes(extname(path).toLowerCase())
+}
+
+function sendFile(request, response, path, headers = {}) {
   if (!existsSync(path) || !statSync(path).isFile()) {
     response.writeHead(404, {
       'content-type': 'text/plain; charset=utf-8',
@@ -68,11 +79,51 @@ function sendFile(response, path, headers = {}) {
     response.end('Not found')
     return
   }
+  const compress = acceptsGzip(request) && shouldCompress(path)
   response.writeHead(200, {
     'content-type': contentType(path),
+    ...(shouldCompress(path) ? { vary: 'Accept-Encoding' } : {}),
+    ...(compress ? { 'content-encoding': 'gzip' } : {}),
     ...headers,
   })
-  createReadStream(path).pipe(response)
+  const stream = createReadStream(path)
+  if (compress) {
+    stream.pipe(createGzip()).pipe(response)
+    return
+  }
+  stream.pipe(response)
+}
+
+function sendJson(request, response, status, payload, headers = {}) {
+  const compress = acceptsGzip(request)
+  response.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    vary: 'Accept-Encoding',
+    ...(compress ? { 'content-encoding': 'gzip' } : {}),
+    ...headers,
+  })
+
+  const stream = Readable.from([JSON.stringify(payload)])
+  if (compress) {
+    stream.pipe(createGzip()).pipe(response)
+    return
+  }
+  stream.pipe(response)
+}
+
+function sendLedgerApiError(request, response, error) {
+  sendJson(
+    request,
+    response,
+    503,
+    {
+      error: error instanceof Error ? error.message : 'Could not read lucky draw ledger.',
+    },
+    {
+      'cache-control': 'no-store',
+      'access-control-allow-origin': '*',
+    },
+  )
 }
 
 function distPathForUrl(url) {
@@ -231,8 +282,59 @@ const server = createServer((request, response) => {
     return
   }
 
+  if (url.pathname === '/api/raffle-summary') {
+    try {
+      sendJson(request, response, 200, buildLedgerSummary(readLedgerPayload(ledgerPath)), {
+        'cache-control': 'no-store',
+        'access-control-allow-origin': '*',
+      })
+    } catch (error) {
+      sendLedgerApiError(request, response, error)
+    }
+    return
+  }
+
+  if (url.pathname === '/api/raffle-entry') {
+    const walletQuery = url.searchParams.get('wallet') || ''
+    if (!walletQuery.trim()) {
+      sendJson(
+        request,
+        response,
+        400,
+        {
+          entry: null,
+          error: 'wallet query is required',
+        },
+        {
+          'cache-control': 'no-store',
+          'access-control-allow-origin': '*',
+        },
+      )
+      return
+    }
+
+    try {
+      const ledger = readLedgerPayload(ledgerPath)
+      sendJson(
+        request,
+        response,
+        200,
+        {
+          entry: findLedgerEntry(ledger, walletQuery),
+        },
+        {
+          'cache-control': 'no-store',
+          'access-control-allow-origin': '*',
+        },
+      )
+    } catch (error) {
+      sendLedgerApiError(request, response, error)
+    }
+    return
+  }
+
   if (url.pathname === '/lucky-draw-ledger.json') {
-    sendFile(response, ledgerPath, {
+    sendFile(request, response, ledgerPath, {
       'cache-control': 'no-store',
       'access-control-allow-origin': '*',
     })
@@ -241,11 +343,11 @@ const server = createServer((request, response) => {
 
   const filePath = distPathForUrl(request.url || '/')
   if (filePath && existsSync(filePath) && statSync(filePath).isFile()) {
-    sendFile(response, filePath)
+    sendFile(request, response, filePath)
     return
   }
 
-  sendFile(response, join(distDir, 'index.html'), {
+  sendFile(request, response, join(distDir, 'index.html'), {
     'cache-control': 'no-cache',
   })
 })

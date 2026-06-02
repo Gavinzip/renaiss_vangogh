@@ -17,11 +17,16 @@ import { TicketHome } from './components/TicketHome'
 import { WalletPanel } from './components/WalletPanel'
 import { initializeAnalytics, trackEvent, trackPageView } from './lib/analytics'
 import { COPY, LANGUAGES, type LanguageCode } from './lib/i18n'
-import { loadRaffleLedger } from './lib/ticketing/openMonitor'
-import { entryMatches } from './lib/ticketing/display'
+import { loadFullRaffleLedger, loadRaffleEntry, loadRaffleLedger } from './lib/ticketing/openMonitor'
 import { loadWalletIdentities, type WalletIdentityMap } from './lib/ticketing/identities'
-import type { RaffleLedger } from './lib/ticketing/types'
-import { DRAW_NETWORKS, isDrawNetworkKey, type DrawNetworkKey, type DrawRunMode } from './lib/contracts/luckyDrawNetworks'
+import type { RaffleEntry, RaffleLedger } from './lib/ticketing/types'
+import {
+  DRAW_NETWORKS,
+  isAuthorizedDrawOperator,
+  isDrawNetworkKey,
+  type DrawNetworkKey,
+  type DrawRunMode,
+} from './lib/contracts/luckyDrawNetworks'
 import {
   connectInjectedWallet,
   drawNextWinner,
@@ -66,8 +71,11 @@ function PageHeader({
 
 export default function App() {
   const [ledger, setLedger] = useState<RaffleLedger | null>(null)
+  const [fullLedger, setFullLedger] = useState<RaffleLedger | null>(null)
   const [loadError, setLoadError] = useState('')
+  const [fullLedgerError, setFullLedgerError] = useState('')
   const [query, setQuery] = useState('')
+  const [selectedEntry, setSelectedEntry] = useState<RaffleEntry | null>(null)
   const [page, setPage] = useState<PageKey>('tickets')
   const [wallet, setWallet] = useState<ConnectedWallet | null>(null)
   const [walletError, setWalletError] = useState('')
@@ -83,14 +91,18 @@ export default function App() {
   const [nextLedgerRefreshAt, setNextLedgerRefreshAt] = useState<number>(0)
   const [drawUnlocked, setDrawUnlocked] = useState(false)
   const drawUnlockHitsRef = useRef(0)
+  const entryRequestRef = useRef(0)
   const copy = COPY[language]
   const activePage: PageKey = page === 'draw' && !drawUnlocked ? 'simulator' : page
+  const needsFullLedger = activePage === 'simulator' || activePage === 'draw'
+  const displayLedger = needsFullLedger ? fullLedger ?? ledger : ledger
   const activeDrawNetworkKey: DrawNetworkKey = isDrawNetworkKey(drawRunMode) ? drawRunMode : 'mainnet'
   const activeDrawNetwork = DRAW_NETWORKS[activeDrawNetworkKey]
   const activeStoredDrawStatus = drawStatusByNetwork[activeDrawNetworkKey] ?? null
   const activeWinnerTickets = wallet ? (activeStoredDrawStatus?.winnerTickets ?? winnerTicketsByNetwork[activeDrawNetworkKey] ?? []) : []
   const activeDrawStatus = wallet ? activeStoredDrawStatus : null
   const activeDrawTxHashes = drawTxHashesByNetwork[activeDrawNetworkKey] ?? []
+  const isActiveAuthorizedOperator = isAuthorizedDrawOperator(wallet?.address, activeDrawNetwork)
   const isActiveContractLedgerMismatch = Boolean(activeDrawStatus && activeDrawStatus.totalTickets !== BigInt(ledger?.totalFinalTickets ?? 0))
   const visibleNavItems = useMemo<PageKey[]>(
     () => (drawUnlocked ? [...PUBLIC_NAV_ITEMS, 'draw'] : PUBLIC_NAV_ITEMS),
@@ -134,6 +146,27 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    if (!needsFullLedger || fullLedger) return undefined
+    let alive = true
+
+    async function refreshFullLedger() {
+      setFullLedgerError('')
+      try {
+        const value = await loadFullRaffleLedger()
+        if (alive) setFullLedger(value)
+      } catch (error) {
+        if (alive) setFullLedgerError(error instanceof Error ? error.message : 'Could not load full raffle ledger.')
+      }
+    }
+
+    void refreshFullLedger()
+
+    return () => {
+      alive = false
+    }
+  }, [fullLedger, needsFullLedger])
+
+  useEffect(() => {
     let alive = true
 
     async function refreshIdentities() {
@@ -148,10 +181,17 @@ export default function App() {
     }
   }, [])
 
-  const selectedEntry = useMemo(() => {
-    if (!ledger || !query.trim()) return null
-    return ledger.entries.find((entry) => entryMatches(entry, query)) ?? null
-  }, [ledger, query])
+  async function resolveTicketEntry(value: string) {
+    const requestId = entryRequestRef.current + 1
+    entryRequestRef.current = requestId
+    const nextQuery = value.trim()
+    setSelectedEntry(null)
+    if (!nextQuery) return null
+
+    const entry = await loadRaffleEntry(nextQuery)
+    if (entryRequestRef.current === requestId) setSelectedEntry(entry)
+    return entry
+  }
 
   function handlePageChange(nextPage: PageKey) {
     setPage(nextPage)
@@ -270,6 +310,14 @@ export default function App() {
       return
     }
     const network = DRAW_NETWORKS[networkKey]
+    if (!isAuthorizedDrawOperator(wallet.address, network)) {
+      setDrawMessage(copy.walletPanel.unauthorizedOperator)
+      trackEvent('draw_request', {
+        network: networkKey,
+        status: 'blocked_unauthorized_operator',
+      })
+      return
+    }
     setDrawBusy('draw')
     setDrawMessage('')
     trackEvent('draw_request', {
@@ -308,6 +356,15 @@ export default function App() {
     }
 
     const network = DRAW_NETWORKS[networkKey]
+    if (!isAuthorizedDrawOperator(wallet.address, network)) {
+      setDrawMessage(copy.walletPanel.unauthorizedOperator)
+      trackEvent('draw_next', {
+        network: networkKey,
+        requested_count: count,
+        status: 'blocked_unauthorized_operator',
+      })
+      return []
+    }
     const networkWinnerTickets = winnerTicketsByNetwork[networkKey] ?? []
     const revealedTickets: bigint[] = []
     setDrawBusy('drawNext')
@@ -372,7 +429,7 @@ export default function App() {
     )
   }
 
-  if (!ledger) {
+  if (!ledger || !displayLedger) {
     return (
       <main className="app-shell centered">
         <Loader2 className="spin" size={34} />
@@ -453,6 +510,7 @@ export default function App() {
           nextLedgerRefreshAt={nextLedgerRefreshAt}
           onHiddenDrawUnlock={handleHiddenDrawUnlockHit}
           onCopyTicketRanges={(details) => trackEvent('copy_ticket_ranges', details)}
+          onResolveEntry={resolveTicketEntry}
           onTicketSearch={(details) => trackEvent('ticket_search', details)}
           onTicketSearchResult={(details) => trackEvent('ticket_search_result', details)}
         />
@@ -468,11 +526,43 @@ export default function App() {
             copy={copy.simulation.copy}
             icon={Ticket}
           />
-          <SimpleDrawSimulator ledger={ledger} walletIdentities={walletIdentities} copy={copy} />
+          {fullLedgerError ? (
+            <section className="notice">
+              <AlertTriangle size={20} />
+              <div>
+                <strong>Could not load full raffle ledger</strong>
+                <span>{fullLedgerError}</span>
+              </div>
+            </section>
+          ) : fullLedger ? (
+            <SimpleDrawSimulator ledger={fullLedger} walletIdentities={walletIdentities} copy={copy} />
+          ) : (
+            <main className="app-shell centered">
+              <Loader2 className="spin" size={34} />
+              <p>Loading full raffle ledger...</p>
+            </main>
+          )}
         </>
       )}
 
-      {activePage === 'draw' && (
+      {activePage === 'draw' && fullLedgerError && (
+        <section className="notice">
+          <AlertTriangle size={20} />
+          <div>
+            <strong>Could not load full raffle ledger</strong>
+            <span>{fullLedgerError}</span>
+          </div>
+        </section>
+      )}
+
+      {activePage === 'draw' && !fullLedgerError && !fullLedger && (
+        <main className="app-shell centered">
+          <Loader2 className="spin" size={34} />
+          <p>Loading full raffle ledger...</p>
+        </main>
+      )}
+
+      {activePage === 'draw' && fullLedger && (
         <>
           <PageHeader
             eyebrow={copy.draw.eyebrow}
@@ -485,12 +575,12 @@ export default function App() {
               runMode={drawRunMode}
               onRunModeChange={handleDrawRunModeChange}
               winnerTickets={activeWinnerTickets}
-              totalTickets={ledger.totalFinalTickets}
-              ledger={ledger}
+              totalTickets={fullLedger.totalFinalTickets}
+              ledger={fullLedger}
               walletIdentities={walletIdentities}
               copy={copy}
               drawStatus={activeDrawStatus}
-              hasWallet={Boolean(wallet)}
+              hasWallet={Boolean(wallet && isActiveAuthorizedOperator)}
               isContractBusy={drawBusy === 'draw' || drawBusy === 'drawNext'}
               isContractLedgerMismatch={isActiveContractLedgerMismatch}
               onConnectWallet={() => connectBscWallet(activeDrawNetworkKey)}
@@ -503,8 +593,10 @@ export default function App() {
               status={activeDrawStatus}
               message={drawMessage}
               busy={drawBusy}
-              ledgerTotalTickets={ledger.totalFinalTickets}
+              ledgerTotalTickets={fullLedger.totalFinalTickets}
               transactionHashes={activeDrawTxHashes}
+              authorizedOperatorAddress={activeDrawNetwork.authorizedOperatorAddress}
+              isAuthorizedOperator={isActiveAuthorizedOperator}
               onConnectWallet={() => connectBscWallet(activeDrawNetworkKey)}
               onRefreshStatus={() => refreshDrawStatus(activeDrawNetworkKey)}
               onRequestDraw={() => requestDrawRound(activeDrawNetworkKey)}
@@ -513,7 +605,7 @@ export default function App() {
               }}
               copy={copy}
             />
-            <ContractDetails ledger={ledger} network={activeDrawNetwork} copy={copy} />
+            <ContractDetails ledger={fullLedger} network={activeDrawNetwork} copy={copy} />
             <section className="draw-support-panel">
               <article className="draw-support-card draw-support-card--media">
                 <img src={liveDrawImage} alt="Van Gogh live draw machine artwork" />

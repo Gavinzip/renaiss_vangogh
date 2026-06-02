@@ -53,6 +53,13 @@ function optionalBool(key, fallback) {
   return ['1', 'true', 'yes'].includes(value.toLowerCase())
 }
 
+function optionalAddress(key, fallback) {
+  const value = env[key] || fallback
+  if (!value) return ''
+  if (!ethers.isAddress(value)) throw new Error(`${key} must be a valid EVM address.`)
+  return ethers.getAddress(value)
+}
+
 function parseSubscriptionId(receipt, coordinator) {
   for (const log of receipt.logs) {
     try {
@@ -84,6 +91,8 @@ const callbackGasLimit = optionalInt('VRF_CALLBACK_GAS_LIMIT', 750000)
 const nativePayment = optionalBool('VRF_NATIVE_PAYMENT', true)
 const initialPrizeSlotCount = optionalInt('INITIAL_PRIZE_SLOT_COUNT', 21)
 const configuredSubscriptionId = env.VRF_SUBSCRIPTION_ID ? BigInt(env.VRF_SUBSCRIPTION_ID) : 0n
+const targetDrawOperator = optionalAddress('DRAW_OPERATOR_ADDRESS', '0x88b620388698490764fd85cfa482b5e3a8ad63b5')
+const targetOwner = optionalAddress('DRAW_OWNER_ADDRESS', env.DRAW_OPERATOR_ADDRESS || targetDrawOperator)
 
 const safeConfig = {
   envFile: envFilePath,
@@ -98,6 +107,8 @@ const safeConfig = {
   callbackGasLimit,
   nativePayment,
   initialPrizeSlotCount,
+  targetDrawOperator,
+  targetOwner,
 }
 
 if (!broadcast) {
@@ -158,12 +169,29 @@ const addConsumerTx = await coordinator.addConsumer(subscriptionId, raffleAddres
 txs.push({ step: 'addConsumer', hash: addConsumerTx.hash })
 await addConsumerTx.wait()
 
+if (targetDrawOperator && targetDrawOperator.toLowerCase() !== wallet.address.toLowerCase()) {
+  const operatorTx = await raffle.setDrawOperator(targetDrawOperator)
+  txs.push({ step: 'setDrawOperator', operator: targetDrawOperator, hash: operatorTx.hash })
+  await operatorTx.wait()
+}
+
+let ownerTransferPending = false
+if (targetOwner && targetOwner.toLowerCase() !== wallet.address.toLowerCase()) {
+  const ownerTx = await raffle.transferOwnership(targetOwner)
+  txs.push({ step: 'transferOwnership', pendingOwner: targetOwner, hash: ownerTx.hash })
+  await ownerTx.wait()
+  ownerTransferPending = true
+}
+
 console.log(
   JSON.stringify(
     {
       ok: true,
       broadcast: true,
       deployer: wallet.address,
+      owner: ownerTransferPending ? wallet.address : targetOwner || wallet.address,
+      pendingOwner: ownerTransferPending ? targetOwner : null,
+      drawOperator: targetDrawOperator || wallet.address,
       subscriptionId: subscriptionId.toString(),
       raffle: raffleAddress,
       frontendContractAddress: raffleAddress,

@@ -20,6 +20,10 @@
     "contract:deploy:bsc": "node scripts/deploy-lucky-draw.mjs --broadcast",
     "contract:deploy:testnet:check": "node scripts/deploy-lucky-draw.mjs --env-file .env.deploy.testnet.local",
     "contract:deploy:testnet": "node scripts/deploy-lucky-draw.mjs --env-file .env.deploy.testnet.local --broadcast",
+    "contract:roles:check": "node scripts/configure-lucky-draw-roles.mjs",
+    "contract:roles": "node scripts/configure-lucky-draw-roles.mjs --broadcast",
+    "contract:roles:testnet:check": "node scripts/configure-lucky-draw-roles.mjs --env-file .env.deploy.testnet.local",
+    "contract:roles:testnet": "node scripts/configure-lucky-draw-roles.mjs --env-file .env.deploy.testnet.local --broadcast",
     "contract:round:testnet": "node scripts/run-lucky-draw-round.mjs --env-file .env.deploy.testnet.local",
     "wallet:create": "node scripts/create-deployment-wallet.mjs"
   },

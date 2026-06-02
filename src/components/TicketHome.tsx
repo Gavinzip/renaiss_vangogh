@@ -97,6 +97,7 @@ export function TicketHome({
   nextLedgerRefreshAt,
   onHiddenDrawUnlock,
   onCopyTicketRanges,
+  onResolveEntry,
   onTicketSearch,
   onTicketSearchResult,
 }: {
@@ -111,6 +112,7 @@ export function TicketHome({
   nextLedgerRefreshAt: number
   onHiddenDrawUnlock?: () => void
   onCopyTicketRanges?: (details: CopyTicketRangesDetails) => void
+  onResolveEntry?: (query: string) => Promise<RaffleEntry | null>
   onTicketSearch?: (details: TicketSearchDetails) => void
   onTicketSearchResult?: (details: TicketSearchResultDetails) => void
 }) {
@@ -118,8 +120,10 @@ export function TicketHome({
   const [resultRevealRun, setResultRevealRun] = useState(0)
   const [submittedQuery, setSubmittedQuery] = useState('')
   const [searchPhase, setSearchPhase] = useState<SearchPhase>('idle')
+  const [searchError, setSearchError] = useState('')
   const scanTimerRef = useRef<number | null>(null)
   const reportedSearchResultRef = useRef('')
+  const searchRequestRef = useRef(0)
   const normalizedQuery = query.trim()
   const isSubmittedQuery = submittedQuery.length > 0 && submittedQuery === normalizedQuery
   const isScanningLedger = isSubmittedQuery && searchPhase === 'scanning'
@@ -145,11 +149,12 @@ export function TicketHome({
   useEffect(() => {
     return () => {
       if (scanTimerRef.current) window.clearTimeout(scanTimerRef.current)
+      searchRequestRef.current += 1
     }
   }, [])
 
   useEffect(() => {
-    if (!hasSettledSearch || !submittedQuery) return
+    if (!hasSettledSearch || !submittedQuery || searchError) return
 
     const reportKey = `${submittedQuery}:${displayEntry?.userAddress ?? 'not-found'}`
     if (reportedSearchResultRef.current === reportKey) return
@@ -163,7 +168,7 @@ export function TicketHome({
       result: displayEntry ? 'found' : 'not_found',
       sbt_tier: displayEntry?.sbt,
     })
-  }, [displayEntry, hasSettledSearch, onTicketSearchResult, submittedQuery])
+  }, [displayEntry, hasSettledSearch, onTicketSearchResult, searchError, submittedQuery])
 
   function clearScanTimer() {
     if (!scanTimerRef.current) return
@@ -173,14 +178,25 @@ export function TicketHome({
 
   function handleQueryChange(value: string) {
     clearScanTimer()
+    searchRequestRef.current += 1
+    setSearchError('')
     setSubmittedQuery('')
     setSearchPhase('idle')
     setQuery(value)
   }
 
+  async function waitForScanDelay() {
+    await new Promise<void>((resolve) => {
+      window.setTimeout(resolve, LEDGER_SCAN_MS)
+    })
+  }
+
   function submitQuery(value = query, source: TicketSearchSource = 'manual') {
     const nextQuery = value.trim()
+    const requestId = searchRequestRef.current + 1
+    searchRequestRef.current = requestId
     clearScanTimer()
+    setSearchError('')
     setQuery(nextQuery)
     setResultRevealRun((current) => current + 1)
     onTicketSearch?.({
@@ -195,10 +211,22 @@ export function TicketHome({
 
     setSubmittedQuery(nextQuery)
     setSearchPhase('scanning')
-    scanTimerRef.current = window.setTimeout(() => {
+    if (!onResolveEntry) {
+      scanTimerRef.current = window.setTimeout(() => {
+        if (searchRequestRef.current === requestId) setSearchPhase('settled')
+        scanTimerRef.current = null
+      }, LEDGER_SCAN_MS)
+      return
+    }
+
+    void Promise.allSettled([onResolveEntry(nextQuery), waitForScanDelay()]).then((results) => {
+      if (searchRequestRef.current !== requestId) return
+      const [entryResult] = results
+      if (entryResult.status === 'rejected') {
+        setSearchError(entryResult.reason instanceof Error ? entryResult.reason.message : 'Could not load raffle result.')
+      }
       setSearchPhase('settled')
-      scanTimerRef.current = null
-    }, LEDGER_SCAN_MS)
+    })
   }
 
   async function copyTickets() {
@@ -334,6 +362,8 @@ export function TicketHome({
               <span>
                 {isScanningLedger
                   ? copy.ticketHome.searchingLedger
+                  : searchError
+                    ? searchError
                   : hasSettledSearch
                     ? copy.ticketHome.noTickets
                     : copy.ticketHome.searchEmpty}

@@ -21,6 +21,8 @@ export function WalletPanel({
   copy,
   ledgerTotalTickets,
   transactionHashes,
+  authorizedOperatorAddress,
+  isAuthorizedOperator,
 }: {
   network: DrawNetworkConfig
   wallet: ConnectedWallet | null
@@ -34,6 +36,8 @@ export function WalletPanel({
   copy: AppCopy
   ledgerTotalTickets: number
   transactionHashes: string[]
+  authorizedOperatorAddress: string
+  isAuthorizedOperator: boolean
 }) {
   const drawState = status
     ? status.fulfilled
@@ -49,7 +53,7 @@ export function WalletPanel({
   const explorerBaseUrl = network.blockExplorerUrls[0]?.replace(/\/$/, '') ?? ''
   const contractExplorerUrl = `${explorerBaseUrl}/address/${network.contractAddress}`
   const contractEventsUrl = `${contractExplorerUrl}#events`
-  const chainActionsDisabled = busy !== null || !wallet || hasTicketMismatch
+  const chainActionsDisabled = busy !== null || !wallet || !isAuthorizedOperator || hasTicketMismatch
 
   return (
     <section className="panel wallet-panel">
@@ -69,6 +73,9 @@ export function WalletPanel({
         <span>{network.label}</span>
         <strong>{network.contractAddress}</strong>
         <small>{network.chainName}</small>
+        <small>
+          {copy.walletPanel.authorizedOperator}: {formatAddress(authorizedOperatorAddress)}
+        </small>
       </div>
 
       <div className="wallet-actions-head">
@@ -101,9 +108,15 @@ export function WalletPanel({
           <strong className={isWalletOnSelectedNetwork ? '' : 'is-warning'}>{wallet.chainName}</strong>
           <span>{copy.walletPanel.operator}</span>
           <strong>{formatAddress(wallet.address)}</strong>
+          <span>{copy.walletPanel.authorizedOperator}</span>
+          <strong className={isAuthorizedOperator ? '' : 'is-warning'}>{formatAddress(authorizedOperatorAddress)}</strong>
         </div>
       ) : (
         <p className="wallet-status-preview">{copy.walletPanel.statusPreview}</p>
+      )}
+
+      {wallet && !isAuthorizedOperator && (
+        <p className="message wallet-warning-message">{copy.walletPanel.unauthorizedOperator}</p>
       )}
 
       {status && (
