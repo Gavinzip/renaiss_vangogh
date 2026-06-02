@@ -10,7 +10,7 @@ import { buildLedgerSummary, findLedgerEntry, readLedgerPayload } from './raffle
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const distDir = resolve(repoRoot, 'dist')
-const dataDir = process.env.LUCKY_DRAW_DATA_DIR || '/Data/lucky-draw'
+const dataDir = process.env.LUCKY_DRAW_DATA_DIR || '/data/lucky-draw'
 const cacheDir = process.env.LUCKY_DRAW_CACHE_DIR || join(dataDir, 'cache')
 const ledgerPath = process.env.LUCKY_DRAW_LEDGER_PATH || join(dataDir, 'lucky-draw-ledger.json')
 const snapshotDir = process.env.LUCKY_DRAW_SNAPSHOT_DIR || join(dataDir, 'snapshots')

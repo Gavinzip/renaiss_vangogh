@@ -14,9 +14,9 @@ RUN apk add --no-cache git
 
 ENV NODE_ENV=production
 ENV PORT=3000
-ENV LUCKY_DRAW_DATA_DIR=/Data/lucky-draw
-ENV LUCKY_DRAW_CACHE_DIR=/Data/lucky-draw/cache
-ENV LUCKY_DRAW_LEDGER_PATH=/Data/lucky-draw/lucky-draw-ledger.json
+ENV LUCKY_DRAW_DATA_DIR=/data/lucky-draw
+ENV LUCKY_DRAW_CACHE_DIR=/data/lucky-draw/cache
+ENV LUCKY_DRAW_LEDGER_PATH=/data/lucky-draw/lucky-draw-ledger.json
 ENV LUCKY_DRAW_REFRESH_MINUTES=60
 ENV DATA_BACKUP_REPO_URL=https://github.com/Gavinzip/renaiss_vangogh_data.git
 ENV DATA_BACKUP_INTERVAL_MINUTES=60

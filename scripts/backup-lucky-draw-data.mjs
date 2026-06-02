@@ -19,13 +19,13 @@ const execFileAsync = promisify(execFile)
 
 function parseArgs(argv) {
   const args = {
-    dataDir: process.env.LUCKY_DRAW_DATA_DIR || '/Data/lucky-draw',
+    dataDir: process.env.LUCKY_DRAW_DATA_DIR || '/data/lucky-draw',
     repoUrl:
       process.env.DATA_BACKUP_REPO_URL ||
       process.env.LUCKY_DRAW_BACKUP_REPO_URL ||
       'https://github.com/Gavinzip/renaiss_vangogh_data.git',
     branch: process.env.DATA_BACKUP_BRANCH || 'main',
-    worktree: process.env.DATA_BACKUP_WORKTREE || '/Data/lucky-draw-backup-repo',
+    worktree: process.env.DATA_BACKUP_WORKTREE || '/data/lucky-draw-backup-repo',
     dryRun: false,
   }
 

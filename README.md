@@ -51,16 +51,16 @@ Required environment:
 ```bash
 BSCSCAN_API_KEY=...
 PORT=3000
-LUCKY_DRAW_DATA_DIR=/Data/lucky-draw
-LUCKY_DRAW_CACHE_DIR=/Data/lucky-draw/cache
-LUCKY_DRAW_LEDGER_PATH=/Data/lucky-draw/lucky-draw-ledger.json
+LUCKY_DRAW_DATA_DIR=/data/lucky-draw
+LUCKY_DRAW_CACHE_DIR=/data/lucky-draw/cache
+LUCKY_DRAW_LEDGER_PATH=/data/lucky-draw/lucky-draw-ledger.json
 LUCKY_DRAW_REFRESH_MINUTES=60
 DATA_BACKUP_REPO_URL=https://github.com/Gavinzip/renaiss_vangogh_data.git
 DATA_BACKUP_GITHUB_TOKEN=...
 DATA_BACKUP_INTERVAL_MINUTES=60
 ```
 
-`/Data` must be a mounted persistent disk on the server. Do not point `LUCKY_DRAW_CACHE_DIR` inside the git repo in production.
+`/data` must be a mounted persistent disk on the server. Do not point `LUCKY_DRAW_CACHE_DIR` inside the git repo in production.
 
 Production commands:
 
@@ -70,9 +70,9 @@ npm run build
 npm run start
 ```
 
-The server refreshes the ledger once at startup and then every hour. It writes API/cache files under `/Data/lucky-draw/cache`, writes the public ledger to `/Data/lucky-draw/lucky-draw-ledger.json`, and copies each successful ledger to `/Data/lucky-draw/snapshots`.
+The server refreshes the ledger once at startup and then every hour. It writes API/cache files under `/data/lucky-draw/cache`, writes the public ledger to `/data/lucky-draw/lucky-draw-ledger.json`, and copies each successful ledger to `/data/lucky-draw/snapshots`.
 
-When `DATA_BACKUP_GITHUB_TOKEN` is present, the server backs up `/Data/lucky-draw` to `DATA_BACKUP_REPO_URL` every hour and after a successful ledger refresh. Use a fine-grained GitHub token with Contents read/write on only the backup repository.
+When `DATA_BACKUP_GITHUB_TOKEN` is present, the server backs up `/data/lucky-draw` to `DATA_BACKUP_REPO_URL` every hour and after a successful ledger refresh. Use a fine-grained GitHub token with Contents read/write on only the backup repository.
 
 Docker deployment uses the same defaults:
 
@@ -81,7 +81,7 @@ docker build -t renaiss-vangogh .
 docker run --rm -p 3000:3000 \
   -e BSCSCAN_API_KEY=... \
   -e DATA_BACKUP_GITHUB_TOKEN=... \
-  -v /Data:/Data \
+  -v /data:/data \
   renaiss-vangogh
 ```
 

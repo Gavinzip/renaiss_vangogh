@@ -12,7 +12,7 @@
     "fetch:ledger": "node scripts/fetch-lucky-draw-ledger.mjs",
     "watch:ledger": "node scripts/watch-lucky-draw-ledger.mjs --interval-minutes 60",
     "watch:ledger:15m": "node scripts/watch-lucky-draw-ledger.mjs --interval-minutes 15",
-    "fetch:ledger:prod": "node scripts/fetch-lucky-draw-ledger.mjs --cache-dir /Data/lucky-draw/cache --out /Data/lucky-draw/lucky-draw-ledger.json",
+    "fetch:ledger:prod": "node scripts/fetch-lucky-draw-ledger.mjs --cache-dir /data/lucky-draw/cache --out /data/lucky-draw/lucky-draw-ledger.json",
     "backup:data": "node scripts/backup-lucky-draw-data.mjs",
     "contract:compile": "hardhat compile",
     "contract:dry-run": "node scripts/contract-dry-run.mjs",
