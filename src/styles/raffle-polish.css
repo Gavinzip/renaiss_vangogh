@@ -407,6 +407,34 @@
   text-shadow: 0 2px 14px rgba(0, 0, 0, 0.18);
 }
 
+.page-tickets .ticket-side-stack .ledger-mini-panel {
+  border-color: rgba(13, 63, 112, 0.18);
+  color: #071526;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(236, 246, 255, 0.9)),
+    radial-gradient(circle at 90% 18%, rgba(255, 207, 101, 0.2), transparent 36%);
+  box-shadow:
+    0 22px 54px rgba(12, 48, 90, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.94);
+}
+
+.page-tickets .ticket-side-stack .ledger-mini-panel svg {
+  color: #c79018;
+  filter: drop-shadow(0 8px 18px rgba(199, 144, 24, 0.18));
+}
+
+.page-tickets .ticket-side-stack .ledger-mini-panel span,
+.page-tickets .ticket-side-stack .ledger-mini-panel small {
+  color: #39546f;
+  font-weight: 860;
+  text-shadow: none;
+}
+
+.page-tickets .ticket-side-stack .ledger-mini-panel strong {
+  color: #071526;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
 @keyframes ticketResultCardIn {
   from {
     opacity: 0;

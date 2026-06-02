@@ -8,7 +8,11 @@ import './styles/raffle-draw.css'
 import './styles/raffle-simulator.css'
 import './styles/raffle-polish.css'
 import renaissLogo from './assets/renaiss-logo-alpha-cropped.webp'
+import holoCardBackImage from './assets/psa-pikachu-van-gogh-back-cut-fast.webp'
+import holoCardFrontImage from './assets/psa-pikachu-van-gogh-front-cut-fast.webp'
 import liveDrawImage from './assets/van-gogh-live-source.webp'
+import heroBackgroundImage from './assets/van-gogh-starry-hero-bg.webp'
+import { InitialPageLoader } from './components/InitialPageLoader'
 import { TicketHome } from './components/TicketHome'
 import { initializeAnalytics, trackEvent, trackPageView } from './lib/analytics'
 import { COPY, LANGUAGES, type LanguageCode } from './lib/i18n'
@@ -41,7 +45,10 @@ const WalletPanel = lazy(() => import('./components/WalletPanel').then((module) 
 
 const LEDGER_REFRESH_INTERVAL_MS = 15 * 60 * 1000
 const FULL_LEDGER_PRELOAD_DELAY_MS = 1200
+const INITIAL_LOADER_MIN_VISIBLE_MS = 1100
+const INITIAL_LOADER_EXIT_MS = 540
 const SECRET_DRAW_UNLOCK_CLICKS = 3
+const INITIAL_PRELOAD_ASSETS = [renaissLogo, heroBackgroundImage, holoCardFrontImage, holoCardBackImage]
 
 const PUBLIC_NAV_ITEMS: PageKey[] = ['tickets', 'rules', 'simulator']
 type DrawBusyState = 'connect' | 'read' | 'draw' | 'drawNext' | null
@@ -85,6 +92,22 @@ function ledgerCacheKey(value: RaffleLedger | null) {
   return value.ledgerHash || (value.generatedAt ? String(value.generatedAt) : '')
 }
 
+function preloadImageSource(source: string) {
+  return new Promise<void>((resolve) => {
+    const image = new Image()
+    image.decoding = 'async'
+    image.onload = () => {
+      if (!image.decode) {
+        resolve()
+        return
+      }
+      void image.decode().catch(() => undefined).finally(resolve)
+    }
+    image.onerror = () => resolve()
+    image.src = source
+  })
+}
+
 export default function App() {
   const [ledger, setLedger] = useState<RaffleLedger | null>(null)
   const [fullLedger, setFullLedger] = useState<RaffleLedger | null>(null)
@@ -106,6 +129,11 @@ export default function App() {
   const [lastLedgerRefreshAt, setLastLedgerRefreshAt] = useState<number>(0)
   const [nextLedgerRefreshAt, setNextLedgerRefreshAt] = useState<number>(0)
   const [drawUnlocked, setDrawUnlocked] = useState(false)
+  const [initialAssetsReady, setInitialAssetsReady] = useState(false)
+  const [initialCoverPaintReady, setInitialCoverPaintReady] = useState(false)
+  const [initialLoaderVisible, setInitialLoaderVisible] = useState(true)
+  const [initialLoaderMounted, setInitialLoaderMounted] = useState(true)
+  const [initialLoaderStartedAt] = useState(() => Date.now())
   const drawUnlockHitsRef = useRef(0)
   const entryRequestRef = useRef(0)
   const fullLedgerPreloadKeyRef = useRef('')
@@ -125,6 +153,8 @@ export default function App() {
   const activeDrawTxHashes = drawTxHashesByNetwork[activeDrawNetworkKey] ?? []
   const isActiveAuthorizedOperator = isAuthorizedDrawOperator(wallet?.address, activeDrawNetwork)
   const isActiveContractLedgerMismatch = Boolean(activeDrawStatus && activeDrawStatus.totalTickets !== BigInt(ledger?.totalFinalTickets ?? 0))
+  const initialCoverAssetsReady = Boolean(ledger && displayLedger && initialAssetsReady)
+  const initialExperienceReady = initialCoverAssetsReady && initialCoverPaintReady
   const visibleNavItems = useMemo<PageKey[]>(
     () => (drawUnlocked ? [...PUBLIC_NAV_ITEMS, 'draw'] : PUBLIC_NAV_ITEMS),
     [drawUnlocked],
@@ -133,6 +163,73 @@ export default function App() {
   useEffect(() => {
     initializeAnalytics()
   }, [])
+
+  useEffect(() => {
+    let alive = true
+
+    void Promise.all(INITIAL_PRELOAD_ASSETS.map((source) => preloadImageSource(source))).then(() => {
+      if (alive) setInitialAssetsReady(true)
+    })
+
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!initialCoverAssetsReady) return undefined
+
+    let alive = true
+    let firstFrameId = 0
+    let secondFrameId = 0
+
+    const markAfterPaint = () => {
+      firstFrameId = window.requestAnimationFrame(() => {
+        secondFrameId = window.requestAnimationFrame(() => {
+          if (alive) setInitialCoverPaintReady(true)
+        })
+      })
+    }
+
+    if (document.fonts?.ready) {
+      void document.fonts.ready.catch(() => undefined).finally(() => {
+        if (alive) markAfterPaint()
+      })
+    } else {
+      markAfterPaint()
+    }
+
+    return () => {
+      alive = false
+      window.cancelAnimationFrame(firstFrameId)
+      window.cancelAnimationFrame(secondFrameId)
+    }
+  }, [initialCoverAssetsReady])
+
+  useEffect(() => {
+    if (!initialExperienceReady) return undefined
+
+    const elapsed = Date.now() - initialLoaderStartedAt
+    const timeoutId = window.setTimeout(() => {
+      setInitialLoaderVisible(false)
+    }, Math.max(0, INITIAL_LOADER_MIN_VISIBLE_MS - elapsed))
+
+    return () => {
+      window.clearTimeout(timeoutId)
+    }
+  }, [initialExperienceReady, initialLoaderStartedAt])
+
+  useEffect(() => {
+    if (initialLoaderVisible) return undefined
+
+    const timeoutId = window.setTimeout(() => {
+      setInitialLoaderMounted(false)
+    }, INITIAL_LOADER_EXIT_MS)
+
+    return () => {
+      window.clearTimeout(timeoutId)
+    }
+  }, [initialLoaderVisible])
 
   useEffect(() => {
     trackPageView(activePage)
@@ -476,16 +573,12 @@ export default function App() {
   }
 
   if (!ledger || !displayLedger) {
-    return (
-      <main className="app-shell centered">
-        <Loader2 className="spin" size={34} />
-        <p>Loading raffle ledger...</p>
-      </main>
-    )
+    return <InitialPageLoader isLeaving={false} />
   }
 
   return (
-    <main className={`app-shell raffle-shell page-${activePage}`}>
+    <>
+      <main className={`app-shell raffle-shell page-${activePage}`} aria-busy={initialLoaderMounted}>
       <header className="nav">
         <div className="nav-main-row">
           <a
@@ -679,6 +772,8 @@ export default function App() {
         </>
       )}
       </Suspense>
-    </main>
+      </main>
+      {initialLoaderMounted && <InitialPageLoader isLeaving={!initialLoaderVisible} />}
+    </>
   )
 }
