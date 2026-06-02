@@ -8,9 +8,14 @@ export type LedgerMode = 'buyback-ledger' | 'open-monitor-estimate'
 
 export type TicketIntervalSource = 'buyback-event' | 'pack-open' | 'sbt-bonus' | 'estimate'
 
+export type TicketIntervalNamespace = 'raw' | 'bonus' | 'estimate'
+
 export interface TicketInterval {
   start: number
   end: number
+  displayStart?: number
+  displayEnd?: number
+  namespace?: TicketIntervalNamespace
   source: TicketIntervalSource
   pack?: PackKey
   txHash?: string
@@ -62,6 +67,8 @@ export interface RaffleLedger {
   campaignStart: number
   campaignEnd: number
   totalEntries: number
+  totalRawTickets: number
+  totalBonusTickets: number
   totalFinalTickets: number
   sourceEntries: number
   candidateSourceLimited: boolean

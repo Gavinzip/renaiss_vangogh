@@ -1,16 +1,26 @@
 import { useEffect, useMemo, useState } from 'react'
 
-function makeScramble(finalValue: string, frame: number): string {
+const SCRAMBLE_FRAMES = 18
+const SCRAMBLE_FRAME_MS = 58
+
+function makeScramble(finalValue: string, frame: number, totalFrames = SCRAMBLE_FRAMES): string {
   const text = finalValue || '-'
   if (text === '-' || frame <= 0) return text
 
-  const chars = '0123456789ABCDEF'
+  const chars = '0123456789ABCDEFGHJKLMNPQRSTUVWXYZ'
+  const revealableCount = text.split('').filter((char) => !/[\s.,%x#-]/.test(char)).length
+  const revealedCount = Math.floor((frame / totalFrames) * revealableCount)
+  let revealIndex = 0
+
   return text
     .split('')
     .map((char, index) => {
       if (/[\s.,%x#-]/.test(char)) return char
-      if (index < Math.max(0, text.length - frame)) return chars[(index * 7 + frame * 5) % chars.length]
-      return char
+      const output = revealIndex < revealedCount
+        ? char
+        : chars[(index * 11 + frame * 7 + revealIndex * 5) % chars.length]
+      revealIndex += 1
+      return output
     })
     .join('')
 }
@@ -40,16 +50,17 @@ export function RollingReveal({
     let interval = 0
     const timeout = window.setTimeout(() => {
       setSettled(false)
+      setDisplayValue(makeScramble(finalValue, 1))
       interval = window.setInterval(() => {
         frame += 1
-        if (frame >= 12) {
+        if (frame >= SCRAMBLE_FRAMES) {
           window.clearInterval(interval)
           setDisplayValue(finalValue)
           setSettled(true)
           return
         }
         setDisplayValue(makeScramble(finalValue, frame))
-      }, 44)
+      }, SCRAMBLE_FRAME_MS)
     }, delay)
 
     return () => {

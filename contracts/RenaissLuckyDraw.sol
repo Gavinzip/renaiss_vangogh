@@ -9,6 +9,7 @@ contract RenaissLuckyDraw is VRFConsumerBaseV2Plus {
         Draft,
         LedgerFinalized,
         RandomnessRequested,
+        RandomnessReady,
         Fulfilled
     }
 
@@ -42,6 +43,8 @@ contract RenaissLuckyDraw is VRFConsumerBaseV2Plus {
     );
     event LedgerFinalized(bytes32 indexed ledgerHash, uint256 totalTickets, uint256 prizeSlotCount, string ledgerUri);
     event DrawRequested(uint256 indexed requestId, address indexed caller);
+    event RandomnessFulfilled(uint256 indexed requestId, uint256 randomWord);
+    event WinnerDrawn(uint256 indexed slotIndex, uint256 ticketNumber);
     event DrawFulfilled(uint256 indexed requestId, uint256 randomWord, uint256[] winnerTickets);
     event RoundReset();
 
@@ -153,13 +156,24 @@ contract RenaissLuckyDraw is VRFConsumerBaseV2Plus {
 
         randomWord = randomWords[0];
         delete s_winnerTickets;
+        state = DrawState.RandomnessReady;
+        emit RandomnessFulfilled(fulfilledRequestId, randomWords[0]);
+    }
 
-        for (uint256 index = 0; index < prizeSlotCount; index++) {
-            s_winnerTickets.push(_drawUniqueTicket(randomWords[0], index));
+    function drawNext() external onlyDrawOperator returns (uint256 ticketNumber) {
+        if (state != DrawState.RandomnessReady) revert InvalidState();
+
+        uint256 slotIndex = s_winnerTickets.length;
+        if (slotIndex >= prizeSlotCount) revert InvalidState();
+
+        ticketNumber = _drawUniqueTicket(randomWord, slotIndex);
+        s_winnerTickets.push(ticketNumber);
+        emit WinnerDrawn(slotIndex, ticketNumber);
+
+        if (s_winnerTickets.length == prizeSlotCount) {
+            state = DrawState.Fulfilled;
+            emit DrawFulfilled(requestId, randomWord, s_winnerTickets);
         }
-
-        state = DrawState.Fulfilled;
-        emit DrawFulfilled(fulfilledRequestId, randomWords[0], s_winnerTickets);
     }
 
     function winnerTickets() external view returns (uint256[] memory) {

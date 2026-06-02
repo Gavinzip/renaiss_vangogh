@@ -218,6 +218,9 @@ function allocateIntervals(entriesByAddress, events) {
     entry.ticketIntervals.push({
       start,
       end,
+      displayStart: start,
+      displayEnd: end,
+      namespace: 'raw',
       source: event.eventKind === 'legacy-pack-open' ? 'pack-open' : 'buyback-event',
       pack: event.pack,
       txHash: event.txHash,
@@ -234,12 +237,24 @@ function allocateIntervals(entriesByAddress, events) {
     return left.userAddress.localeCompare(right.userAddress)
   })
 
+  let bonusCursor = 0
+  const rawTicketTotal = cursor
   for (const entry of bonusEntries) {
     if (entry.bonusTickets <= 0) continue
-    const start = cursor + 1
-    const end = cursor + entry.bonusTickets
+    const displayStart = bonusCursor + 1
+    const displayEnd = bonusCursor + entry.bonusTickets
+    const start = rawTicketTotal + displayStart
+    const end = rawTicketTotal + displayEnd
+    bonusCursor = displayEnd
     cursor = end
-    entry.ticketIntervals.push({ start, end, source: 'sbt-bonus' })
+    entry.ticketIntervals.push({
+      start,
+      end,
+      displayStart,
+      displayEnd,
+      namespace: 'bonus',
+      source: 'sbt-bonus',
+    })
   }
 
   for (const entry of entriesByAddress.values()) {
@@ -311,12 +326,16 @@ async function main() {
   const entriesByAddress = aggregateBaseTickets(allEvents, resolved.canonicalSources)
   allocateIntervals(entriesByAddress, allEvents)
   const entries = finalizeEntries(entriesByAddress)
+  const totalRawTickets = entries.reduce((sum, entry) => sum + entry.rawTickets, 0)
+  const totalBonusTickets = entries.reduce((sum, entry) => sum + entry.bonusTickets, 0)
   const totalFinalTickets = entries.reduce((sum, entry) => sum + entry.finalTickets, 0)
   const entriesWithOldSourceAddresses = entries.filter((entry) => entry.sourceAddresses.length > 1).length
   const hashPayload = {
     campaignStart: CAMPAIGN_START,
     campaignEnd: CAMPAIGN_END,
     source: sourceResult.source,
+    totalRawTickets,
+    totalBonusTickets,
     totalFinalTickets,
     entries: entries.map((entry) => ({
       userAddress: entry.userAddress,
@@ -332,6 +351,8 @@ async function main() {
     campaignStart: CAMPAIGN_START,
     campaignEnd: CAMPAIGN_END,
     totalEntries: entries.length,
+    totalRawTickets,
+    totalBonusTickets,
     totalFinalTickets,
     sourceEntries: resolved.canonicalSources.size,
     candidateSourceLimited,
@@ -350,7 +371,9 @@ async function main() {
       'MAGMA buybacks require a legacy pull checkout id matched to a buyback activity and count as 2 raw tickets.',
       'RenaCrypt, Pack 7/9, and other packs are not counted unless the official rules change.',
       'Base ticket intervals are ordered by block number, transaction index, log index, timestamp, tx hash, then event id.',
-      'SBT bonus tickets are deterministic and appended after event-backed tickets by first eligible event time, then address.',
+      'Raw tickets use stable R-prefixed display numbers in buyback transaction order.',
+      'SBT bonus tickets use independent B-prefixed display numbers. Their global draw numbers are appended after raw tickets for contract compatibility.',
+      'SBT bonus display numbers are provisional until the final ledger is locked.',
       'Leaderboard rank is sorted by final tickets, then raw tickets, then first eligible event time.',
       candidateSourceLimited
         ? 'Open Monitor candidate mode was used. This is not the official full ledger source.'

@@ -1,0 +1,164 @@
+.page-rules.raffle-shell.app-shell {
+  padding: 0 0 3.5rem;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(247, 251, 255, 0.92)),
+    url("../assets/van-gogh-starry-hero-bg.jpg") center top / cover fixed no-repeat;
+}
+
+.page-rules .rules-gallery-page {
+  width: min(calc(100% - clamp(1rem, 4vw, 4rem)), 1440px);
+  margin: 1rem auto 0;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  border-radius: 28px;
+  background:
+    linear-gradient(105deg, rgba(255, 255, 255, 0.96) 0 35%, rgba(255, 255, 255, 0.72) 52%, rgba(237, 246, 255, 0.52) 100%),
+    radial-gradient(36rem 24rem at 86% 20%, rgba(216, 163, 58, 0.14), transparent 72%),
+    radial-gradient(42rem 28rem at 70% 70%, rgba(29, 110, 232, 0.13), transparent 76%);
+  box-shadow: var(--raffle-shadow);
+}
+
+.page-rules .rules-hero-frame {
+  min-height: min(820px, calc(100svh - 7rem));
+  overflow: hidden;
+}
+
+.page-rules .prize-gallery-canvas {
+  inset: 0 0 0 clamp(300px, 38vw, 560px);
+  min-height: 640px;
+  opacity: 0.96;
+}
+
+.page-rules .rules-gallery-copy {
+  top: clamp(2.4rem, 6vh, 4.6rem);
+  left: clamp(2rem, 5vw, 4.5rem);
+  width: min(430px, 38vw);
+  padding: 1.1rem;
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  border-radius: 24px;
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.84), rgba(245, 250, 255, 0.62)),
+    rgba(255, 255, 255, 0.62);
+  box-shadow:
+    0 22px 60px rgba(26, 64, 115, 0.13),
+    inset 0 1px 0 rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(18px) saturate(126%);
+  -webkit-backdrop-filter: blur(18px) saturate(126%);
+}
+
+.page-rules .gallery-catalogue {
+  color: #647891;
+  border-color: rgba(31, 82, 138, 0.16);
+}
+
+.page-rules .rules-gallery-copy h1 {
+  color: var(--raffle-ink);
+  font-size: clamp(3.4rem, 5.4vw, 5.8rem);
+}
+
+.page-rules .gallery-prize-summary--hero {
+  gap: 0.62rem;
+}
+
+.page-rules .gallery-prize-summary > div {
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(237, 247, 255, 0.76)),
+    linear-gradient(90deg, rgba(29, 110, 232, 0.06), rgba(216, 163, 58, 0.09));
+}
+
+.page-rules .gallery-meta-grid {
+  border-color: rgba(31, 82, 138, 0.12);
+}
+
+.page-rules .rules-down-link {
+  color: #14375e;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(255, 246, 224, 0.76)),
+    rgba(255, 255, 255, 0.72);
+}
+
+.page-rules .rules-scroll-hint {
+  right: clamp(1.2rem, 3vw, 2.6rem);
+  color: #51687f;
+}
+
+.page-rules .rules-detail-section {
+  width: min(calc(100% - clamp(1rem, 4vw, 4rem)), 1440px);
+  margin-inline: auto;
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  border-top: 0;
+  border-radius: 0 0 28px 28px;
+  background:
+    linear-gradient(180deg, rgba(249, 252, 255, 0.9), rgba(255, 255, 255, 0.96)),
+    radial-gradient(40rem 28rem at 12% 12%, rgba(216, 163, 58, 0.09), transparent 74%);
+}
+
+.page-rules .rules-detail-heading h2 {
+  color: var(--raffle-ink);
+}
+
+.page-rules .rules-detail-card {
+  border-color: rgba(255, 255, 255, 0.82);
+  border-radius: 20px;
+}
+
+.page-rules .rules-process-card {
+  background:
+    linear-gradient(135deg, rgba(4, 15, 34, 0.76), rgba(9, 41, 78, 0.58)),
+    url("../assets/van-gogh-starry-hero-bg.jpg") center / cover no-repeat;
+}
+
+@media (max-width: 820px) {
+  .page-rules .rules-hero-frame {
+    display: grid;
+    grid-template-rows: auto minmax(430px, 52vh) auto;
+    gap: 1rem;
+    min-height: auto;
+    padding: 1.1rem;
+  }
+
+  .page-rules .rules-gallery-copy {
+    position: relative;
+    top: auto;
+    left: auto;
+    width: 100%;
+    order: 1;
+  }
+
+  .page-rules .prize-gallery-canvas {
+    position: relative;
+    inset: auto;
+    min-height: 430px;
+    margin: 0 -1.1rem;
+    order: 2;
+  }
+
+  .page-rules .rules-scroll-hint {
+    position: relative;
+    inset: auto;
+    justify-self: start;
+    order: 3;
+    padding-left: 0.2rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .page-rules .rules-gallery-page,
+  .page-rules .rules-detail-section {
+    width: calc(100% - 0.8rem);
+  }
+
+  .page-rules .rules-gallery-copy {
+    padding: 0.95rem;
+    border-radius: 20px;
+  }
+
+  .page-rules .rules-gallery-copy h1 {
+    font-size: clamp(3rem, 17vw, 4.7rem);
+  }
+
+  .page-rules .rules-detail-section {
+    padding: 2.6rem 0.9rem;
+  }
+}

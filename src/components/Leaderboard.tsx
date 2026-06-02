@@ -50,7 +50,7 @@ export function Leaderboard({
               <th>Raw</th>
               <th>SBT tier</th>
               <th>Final</th>
-              <th>Ticket range</th>
+              <th>Ticket numbers</th>
             </tr>
           </thead>
           <tbody>

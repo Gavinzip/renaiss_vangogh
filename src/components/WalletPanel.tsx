@@ -1,87 +1,46 @@
 import { Database, Loader2, LockKeyhole, Sparkles, Wallet } from 'lucide-react'
-import { useState } from 'react'
+import type { DrawNetworkConfig } from '../lib/contracts/luckyDrawNetworks'
 import type { AppCopy } from '../lib/i18n'
 import { compactNumber } from '../lib/ticketing/display'
 import { formatAddress } from '../lib/ticketing/rules'
 import {
-  BSC_MAINNET_CHAIN_ID,
-  connectInjectedWallet,
-  readDrawStatus,
-  requestContractDraw,
   type ConnectedWallet,
   type DrawStatus,
 } from '../lib/wallet/bsc'
 
 export function WalletPanel({
-  contractAddress,
-  setContractAddress,
+  network,
   wallet,
-  setWallet,
+  status,
+  message,
+  busy,
+  onConnectWallet,
+  onRefreshStatus,
+  onRequestDraw,
+  onDrawNext,
   copy,
 }: {
-  contractAddress: string
-  setContractAddress: (value: string) => void
+  network: DrawNetworkConfig
   wallet: ConnectedWallet | null
-  setWallet: (wallet: ConnectedWallet | null) => void
+  status: DrawStatus | null
+  message: string
+  busy: 'connect' | 'read' | 'draw' | 'drawNext' | null
+  onConnectWallet: () => void
+  onRefreshStatus: () => void
+  onRequestDraw: () => void
+  onDrawNext: () => void
   copy: AppCopy
 }) {
-  const [status, setStatus] = useState<DrawStatus | null>(null)
-  const [message, setMessage] = useState('')
-  const [busy, setBusy] = useState<'connect' | 'read' | 'draw' | null>(null)
-
-  async function connectWallet() {
-    setBusy('connect')
-    setMessage('')
-    try {
-      setWallet(await connectInjectedWallet())
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : copy.walletPanel.connectionFailed)
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  async function refreshStatus() {
-    if (!wallet) {
-      setMessage(copy.walletPanel.connectFirst)
-      return
-    }
-    if (!contractAddress.trim()) {
-      setMessage(copy.walletPanel.setContractFirst)
-      return
-    }
-    setBusy('read')
-    setMessage('')
-    try {
-      setStatus(await readDrawStatus(wallet.provider, contractAddress.trim()))
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : copy.walletPanel.readFailed)
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  async function requestDraw() {
-    if (!wallet) {
-      setMessage(copy.walletPanel.connectFirst)
-      return
-    }
-    if (!contractAddress.trim()) {
-      setMessage(copy.walletPanel.setContractFirst)
-      return
-    }
-    setBusy('draw')
-    setMessage('')
-    try {
-      const hash = await requestContractDraw(wallet.provider, contractAddress.trim())
-      setMessage(`${copy.walletPanel.drawSent}: ${hash}`)
-      await refreshStatus()
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : copy.walletPanel.drawFailed)
-    } finally {
-      setBusy(null)
-    }
-  }
+  const drawState = status
+    ? status.fulfilled
+      ? copy.walletPanel.fulfilled
+      : status.requested
+        ? copy.walletPanel.requested
+        : copy.walletPanel.ready
+      : wallet
+      ? copy.common.pending
+      : copy.walletPanel.disconnected
+  const isWalletOnSelectedNetwork = wallet?.chainId === network.chainId
 
   return (
     <section className="panel wallet-panel">
@@ -89,42 +48,53 @@ export function WalletPanel({
         <div>
           <span className="eyebrow">{copy.walletPanel.bscLiveDraw}</span>
           <h2>{copy.walletPanel.title}</h2>
+          <p>{copy.walletPanel.subtitle}</p>
         </div>
-        <LockKeyhole size={20} />
+        <span className={`wallet-state-pill ${wallet ? 'is-connected' : ''}`}>
+          <LockKeyhole size={15} />
+          {wallet ? copy.walletPanel.connected : copy.walletPanel.disconnected}
+        </span>
       </div>
 
-      <label className="field">
-        <span>{copy.walletPanel.contract}</span>
-        <input
-          value={contractAddress}
-          onChange={(event) => setContractAddress(event.target.value)}
-          placeholder="0x..."
-          spellCheck={false}
-        />
-      </label>
+      <div className="wallet-contract-card">
+        <span>{network.label}</span>
+        <strong>{network.contractAddress}</strong>
+        <small>{network.chainName}</small>
+      </div>
+
+      <div className="wallet-actions-head">
+        <span>{copy.walletPanel.operation}</span>
+        <strong>{drawState}</strong>
+      </div>
 
       <div className="button-row">
-        <button className="primary shimmer-button" onClick={connectWallet} disabled={busy !== null}>
+        <button className="primary shimmer-button" onClick={onConnectWallet} disabled={busy !== null}>
           {busy === 'connect' ? <Loader2 className="spin" size={18} /> : <Wallet size={18} />}
           {wallet ? formatAddress(wallet.address) : copy.walletPanel.connectBsc}
         </button>
-        <button onClick={refreshStatus} disabled={busy !== null || !wallet}>
+        <button onClick={onRefreshStatus} disabled={busy !== null || !wallet}>
           {busy === 'read' ? <Loader2 className="spin" size={18} /> : <Database size={18} />}
           {copy.walletPanel.read}
         </button>
-        <button onClick={requestDraw} disabled={busy !== null || !wallet}>
+        <button onClick={onRequestDraw} disabled={busy !== null || !wallet}>
           {busy === 'draw' ? <Loader2 className="spin" size={18} /> : <Sparkles size={18} />}
           {copy.walletPanel.draw}
         </button>
+        <button onClick={onDrawNext} disabled={busy !== null || !wallet}>
+          {busy === 'drawNext' ? <Loader2 className="spin" size={18} /> : <Sparkles size={18} />}
+          {copy.walletPanel.drawNext}
+        </button>
       </div>
 
-      {wallet && (
+      {wallet ? (
         <div className="mini-grid">
           <span>{copy.walletPanel.chain}</span>
-          <strong>{wallet.chainId === BSC_MAINNET_CHAIN_ID ? 'BSC Mainnet' : wallet.chainName}</strong>
+          <strong className={isWalletOnSelectedNetwork ? '' : 'is-warning'}>{wallet.chainName}</strong>
           <span>{copy.walletPanel.operator}</span>
           <strong>{formatAddress(wallet.address)}</strong>
         </div>
+      ) : (
+        <p className="wallet-status-preview">{copy.walletPanel.statusPreview}</p>
       )}
 
       {status && (
@@ -139,7 +109,7 @@ export function WalletPanel({
           </div>
           <div>
             <span>{copy.walletPanel.drawState}</span>
-            <strong>{status.fulfilled ? copy.walletPanel.fulfilled : status.requested ? copy.walletPanel.requested : copy.walletPanel.ready}</strong>
+            <strong>{drawState}</strong>
           </div>
           <div>
             <span>{copy.walletPanel.winners}</span>

@@ -13,17 +13,29 @@ async function fetchJson(url, args) {
   let lastError = null
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const response = await fetch(url, { headers: { accept: 'application/json' } })
-    if (response.ok) return response.json()
+    let retryAfterMs = 0
+    let shouldRetry = false
 
-    const text = await response.text()
-    const rateLimited = isRateLimitResponse(response, text)
-    lastError = new Error(`${url} returned ${response.status}: ${text.slice(0, 240)}`)
-    if (!rateLimited || attempt >= maxAttempts) break
+    try {
+      const response = await fetch(url, { headers: { accept: 'application/json' } })
+      if (response.ok) return response.json()
 
-    const retryAfterSeconds = toNumber(response.headers.get('retry-after'))
-    const retryAfterMs = retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : 0
-    const delayMs = Math.max(retryAfterMs, toNumber(args.backoffMs) || 0, 10_000)
+      const text = await response.text()
+      const rateLimited = isRateLimitResponse(response, text)
+      shouldRetry = rateLimited || response.status >= 500
+      lastError = new Error(`${url} returned ${response.status}: ${text.slice(0, 240)}`)
+
+      const retryAfterSeconds = toNumber(response.headers.get('retry-after'))
+      retryAfterMs = retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : 0
+    } catch (error) {
+      shouldRetry = true
+      lastError = error
+    }
+
+    if (!shouldRetry || attempt >= maxAttempts) break
+
+    const baseBackoffMs = Math.max(toNumber(args.backoffMs) || 0, 1000)
+    const delayMs = Math.max(retryAfterMs, baseBackoffMs * 2 ** (attempt - 1))
     await sleep(delayMs)
   }
 

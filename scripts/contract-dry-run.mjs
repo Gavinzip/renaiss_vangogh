@@ -137,10 +137,46 @@ const requestId = drawEvent?.args?.requestId
 if (!requestId) throw new Error('DrawRequested event missing')
 
 await (await coordinator.fulfill(requestId, 12345678901234567890n)).wait()
-const status = await raffle.roundStatus()
-const winnerTickets = await raffle.winnerTickets()
 
-if (!status.fulfilled) throw new Error('round was not fulfilled')
+const readyStatus = await raffle.roundStatus()
+let winnerTickets = await raffle.winnerTickets()
+if (readyStatus.fulfilled) throw new Error('round was fulfilled before drawNext calls')
+if (winnerTickets.length !== 0) throw new Error('winner tickets should be empty before drawNext calls')
+
+let outsiderDrawNextBlocked = false
+try {
+  await raffle.connect(outsider).drawNext()
+} catch {
+  outsiderDrawNextBlocked = true
+}
+if (!outsiderDrawNextBlocked) {
+  throw new Error('outsider drawNext was not blocked')
+}
+
+const revealedTickets = []
+for (let index = 0; index < Number(prizeSlotCount); index++) {
+  const drawNextTx = await raffle.drawNext()
+  const drawNextReceipt = await drawNextTx.wait()
+  const winnerEvent = drawNextReceipt.logs
+    .map((log) => {
+      try {
+        return raffle.interface.parseLog(log)
+      } catch {
+        return null
+      }
+    })
+    .find((event) => event?.name === 'WinnerDrawn')
+  if (!winnerEvent) throw new Error(`WinnerDrawn event missing at slot ${index}`)
+  if (winnerEvent.args.slotIndex !== BigInt(index)) {
+    throw new Error(`expected slot ${index}, got ${winnerEvent.args.slotIndex}`)
+  }
+  revealedTickets.push(winnerEvent.args.ticketNumber)
+}
+
+const status = await raffle.roundStatus()
+winnerTickets = await raffle.winnerTickets()
+
+if (!status.fulfilled) throw new Error('round was not fulfilled after all drawNext calls')
 if (winnerTickets.length !== Number(prizeSlotCount)) {
   throw new Error(`expected ${prizeSlotCount} winners, got ${winnerTickets.length}`)
 }
@@ -148,6 +184,11 @@ const unique = new Set(winnerTickets.map((ticket) => ticket.toString()))
 if (unique.size !== Number(prizeSlotCount)) throw new Error('winner tickets are not unique')
 for (const ticket of winnerTickets) {
   if (ticket < 1n || ticket > totalTickets) throw new Error(`winner ticket out of range: ${ticket}`)
+}
+for (let index = 0; index < winnerTickets.length; index++) {
+  if (winnerTickets[index] !== revealedTickets[index]) {
+    throw new Error(`stored winner mismatch at slot ${index}`)
+  }
 }
 
 console.log(
@@ -164,6 +205,7 @@ console.log(
       winnerCount: status.winnerCount.toString(),
       firstFiveWinnerTickets: winnerTickets.slice(0, 5).map((ticket) => ticket.toString()),
       outsiderBlocked,
+      outsiderDrawNextBlocked,
     },
     null,
     2,

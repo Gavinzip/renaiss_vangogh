@@ -36,6 +36,9 @@ export function withTicketRanges(entries: RaffleEntry[]): RaffleEntry[] {
             {
               start,
               end,
+              displayStart: start,
+              displayEnd: end,
+              namespace: 'estimate',
               source: entry.ticketIntervals.length > 0 ? entry.ticketIntervals[0].source : 'estimate',
             },
           ]
@@ -110,6 +113,8 @@ export function buildLedgerFromOpenMonitor(data: OpenMonitorLuckyDrawResponse): 
     totalFinalTickets: entries.reduce((sum, entry) => sum + entry.finalTickets, 0),
     sourceEntries: entries.length,
     candidateSourceLimited: entries.length < toInteger(data.total_entries),
+    totalRawTickets: entries.reduce((sum, entry) => sum + entry.rawTickets, 0),
+    totalBonusTickets: entries.reduce((sum, entry) => sum + entry.bonusTickets, 0),
     ledgerHash: null,
     drawContractAddress: null,
     entries,
@@ -135,6 +140,10 @@ export function normalizeLoadedLedger(value: unknown): RaffleLedger | null {
   const maybe = value as Partial<RaffleLedger>
   if (!Array.isArray(maybe.entries)) return null
   if (maybe.mode !== 'buyback-ledger' && maybe.mode !== 'open-monitor-estimate') return null
+  const legacyTotalRawTickets = toInteger(
+    maybe.totalRawTickets ||
+      maybe.entries.reduce((sum, entry) => sum + toInteger((entry as Partial<RaffleEntry>).rawTickets), 0),
+  )
   const entries = maybe.entries
     .map((entry, idx): RaffleEntry | null => {
       const userAddress = normalizeAddress(entry.userAddress)
@@ -146,9 +155,21 @@ export function normalizeLoadedLedger(value: unknown): RaffleLedger | null {
               const start = toInteger(interval.start)
               const end = toInteger(interval.end)
               if (!start || !end || end < start) return null
+              const namespace =
+                interval.namespace ||
+                (interval.source === 'sbt-bonus'
+                  ? 'bonus'
+                  : interval.source === 'estimate'
+                    ? 'estimate'
+                    : 'raw')
+              const legacyBonusDisplayStart = namespace === 'bonus' ? start - legacyTotalRawTickets : start
+              const legacyBonusDisplayEnd = namespace === 'bonus' ? end - legacyTotalRawTickets : end
               return {
                 start,
                 end,
+                displayStart: toInteger(interval.displayStart) || Math.max(1, legacyBonusDisplayStart),
+                displayEnd: toInteger(interval.displayEnd) || Math.max(1, legacyBonusDisplayEnd),
+                namespace,
                 source: interval.source || 'buyback-event',
                 pack: interval.pack,
                 txHash: interval.txHash,
@@ -190,6 +211,12 @@ export function normalizeLoadedLedger(value: unknown): RaffleLedger | null {
     campaignStart: toInteger(maybe.campaignStart),
     campaignEnd: toInteger(maybe.campaignEnd),
     totalEntries: toInteger(maybe.totalEntries || entries.length),
+    totalRawTickets: toInteger(
+      maybe.totalRawTickets || entries.reduce((sum, entry) => sum + entry.rawTickets, 0),
+    ),
+    totalBonusTickets: toInteger(
+      maybe.totalBonusTickets || entries.reduce((sum, entry) => sum + entry.bonusTickets, 0),
+    ),
     totalFinalTickets: toInteger(
       maybe.totalFinalTickets || entries.reduce((sum, entry) => sum + entry.finalTickets, 0),
     ),

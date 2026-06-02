@@ -1,4 +1,5 @@
 import { Clipboard, FileCode2, Hash, ListChecks, Trophy } from 'lucide-react'
+import type { DrawNetworkConfig } from '../lib/contracts/luckyDrawNetworks'
 import type { RaffleLedger } from '../lib/ticketing/types'
 import { compactNumber } from '../lib/ticketing/display'
 import { TOTAL_PRIZE_SLOTS } from '../lib/prizes/prizes'
@@ -6,7 +7,7 @@ import type { AppCopy } from '../lib/i18n'
 
 const CONTRACT_SOURCE = 'contracts/RenaissLuckyDraw.sol'
 
-export function ContractDetails({ ledger, copy }: { ledger: RaffleLedger; copy: AppCopy }) {
+export function ContractDetails({ ledger, network, copy }: { ledger: RaffleLedger; network: DrawNetworkConfig; copy: AppCopy }) {
   async function copySourcePath() {
     await navigator.clipboard.writeText(CONTRACT_SOURCE)
   }
@@ -50,7 +51,7 @@ export function ContractDetails({ ledger, copy }: { ledger: RaffleLedger; copy: 
         </div>
         <div>
           <span>{copy.contract.network}</span>
-          <strong>BNB Smart Chain</strong>
+          <strong>{network.label}</strong>
         </div>
       </div>
 
@@ -67,15 +68,15 @@ export function ContractDetails({ ledger, copy }: { ledger: RaffleLedger; copy: 
 
       <div className="rule-list contract-flow">
         <div>
-          <span>Step 1</span>
+          <span>{copy.contract.stepLabel} 1</span>
           <strong>{copy.contract.step1}</strong>
         </div>
         <div>
-          <span>Step 2</span>
+          <span>{copy.contract.stepLabel} 2</span>
           <strong>{copy.contract.step2}</strong>
         </div>
         <div>
-          <span>Step 3</span>
+          <span>{copy.contract.stepLabel} 3</span>
           <strong>{copy.contract.step3}</strong>
         </div>
       </div>

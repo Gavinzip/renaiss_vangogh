@@ -17,10 +17,14 @@
     "contract:dry-run": "node scripts/contract-dry-run.mjs",
     "contract:deploy:check": "node scripts/deploy-lucky-draw.mjs",
     "contract:deploy:bsc": "node scripts/deploy-lucky-draw.mjs --broadcast",
+    "contract:deploy:testnet:check": "node scripts/deploy-lucky-draw.mjs --env-file .env.deploy.testnet.local",
+    "contract:deploy:testnet": "node scripts/deploy-lucky-draw.mjs --env-file .env.deploy.testnet.local --broadcast",
+    "contract:round:testnet": "node scripts/run-lucky-draw-round.mjs --env-file .env.deploy.testnet.local",
     "wallet:create": "node scripts/create-deployment-wallet.mjs"
   },
   "dependencies": {
     "ethers": "^6.16.0",
+    "gsap": "^3.15.0",
     "lucide-react": "^1.17.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",

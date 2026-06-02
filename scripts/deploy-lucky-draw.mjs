@@ -1,7 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { Contract, ContractFactory, JsonRpcProvider, Wallet, ethers } from 'ethers'
 
-const ENV_FILE = new URL('../.env.deploy.local', import.meta.url)
 const ARTIFACT_FILE = new URL('../artifacts/contracts/RenaissLuckyDraw.sol/RenaissLuckyDraw.json', import.meta.url)
 
 const COORDINATOR_ABI = [
@@ -10,6 +9,14 @@ const COORDINATOR_ABI = [
   'function addConsumer(uint256 subId, address consumer) external',
   'event SubscriptionCreated(uint256 indexed subId, address owner)',
 ]
+
+function argValue(name) {
+  const index = process.argv.indexOf(name)
+  return index >= 0 ? process.argv[index + 1] : ''
+}
+
+const envFilePath = argValue('--env-file') || process.env.DEPLOY_ENV_FILE || '.env.deploy.local'
+const ENV_FILE = new URL(`../${envFilePath}`, import.meta.url)
 
 function loadEnvFile() {
   if (!existsSync(ENV_FILE)) return {}
@@ -79,6 +86,7 @@ const initialPrizeSlotCount = optionalInt('INITIAL_PRIZE_SLOT_COUNT', 21)
 const configuredSubscriptionId = env.VRF_SUBSCRIPTION_ID ? BigInt(env.VRF_SUBSCRIPTION_ID) : 0n
 
 const safeConfig = {
+  envFile: envFilePath,
   deployer: wallet.address,
   network: network.name || `chain-${network.chainId}`,
   chainId: network.chainId.toString(),
@@ -98,7 +106,7 @@ if (!broadcast) {
       {
         ok: true,
         broadcast: false,
-        message: 'No transaction sent. Fund the deployer and run npm run contract:deploy:bsc to broadcast.',
+        message: 'No transaction sent. Fund the deployer and rerun this command with --broadcast to deploy.',
         ...safeConfig,
       },
       null,
@@ -158,7 +166,8 @@ console.log(
       deployer: wallet.address,
       subscriptionId: subscriptionId.toString(),
       raffle: raffleAddress,
-      frontendEnv: `VITE_DRAW_CONTRACT=${raffleAddress}`,
+      frontendContractAddress: raffleAddress,
+      frontendNote: 'Update src/lib/contracts/luckyDrawAbi.ts if this deployment becomes the active draw contract.',
       txs,
     },
     null,

@@ -1,6 +1,6 @@
 import { AlertTriangle, Copy, Search, Ticket, Trophy, Wallet } from 'lucide-react'
 import type { RaffleEntry, RaffleLedger } from '../lib/ticketing/types'
-import { formatAddress, formatSbtTier, PACK_LABELS, PACK_WEIGHTS } from '../lib/ticketing/rules'
+import { formatAddress, formatSbtTier, formatTicketRange, PACK_LABELS, PACK_WEIGHTS } from '../lib/ticketing/rules'
 import {
   anyPrizeProbability,
   compactNumber,
@@ -28,6 +28,8 @@ export function TicketLookup({
   const anyPrizeOdds = anyPrizeProbability(entry, ledger.totalFinalTickets)
   const expectedCash = grandPrizeOdds * CASH_PRIZE_POOL
   const intervals = entry?.ticketIntervals ?? []
+  const rawIntervals = intervals.filter((interval) => interval.namespace !== 'bonus' && interval.source !== 'sbt-bonus')
+  const bonusIntervals = intervals.filter((interval) => interval.namespace === 'bonus' || interval.source === 'sbt-bonus')
 
   async function copyTickets() {
     if (!entry || intervals.length === 0) return
@@ -86,12 +88,16 @@ export function TicketLookup({
               <strong>{formatAddress(entry.userAddress)}</strong>
             </div>
             <div>
-              <span>All ticket ranges</span>
+              <span>Ticket numbers</span>
               <strong>{entryRange(entry, ledger.mode)}</strong>
             </div>
             <div>
               <span>Raw tickets</span>
               <strong>{compactNumber(entry.rawTickets)}</strong>
+            </div>
+            <div>
+              <span>Bonus tickets</span>
+              <strong>{compactNumber(entry.bonusTickets)}</strong>
             </div>
             <div>
               <span>SBT</span>
@@ -124,18 +130,43 @@ export function TicketLookup({
 
         {entry && ledger.mode === 'buyback-ledger' && intervals.length > 0 ? (
           <div className="interval-list">
-            {intervals.slice(0, 120).map((interval, index) => (
-              <article className="interval-row" key={`${interval.start}-${interval.end}-${index}`}>
-                <div>
-                  <strong>{intervalLabel(interval)}</strong>
-                  <span>
-                    {interval.pack ? `${PACK_LABELS[interval.pack]} buyback` : 'Multiplier bonus'}
-                    {interval.txHash ? ` · ${interval.txHash.slice(0, 10)}...${interval.txHash.slice(-6)}` : ''}
-                  </span>
+            {rawIntervals.length > 0 && (
+              <div className="interval-group">
+                <div className="interval-group-heading">
+                  <span>Raw ticket numbers</span>
+                  <strong>{compactNumber(entry.rawTickets)} R</strong>
                 </div>
-                <span>{interval.timestamp ? new Date(interval.timestamp * 1000).toLocaleString() : ''}</span>
-              </article>
-            ))}
+                {rawIntervals.slice(0, 120).map((interval, index) => (
+                  <article className="interval-row" key={`${interval.start}-${interval.end}-${index}`}>
+                    <div>
+                      <strong>{intervalLabel(interval)}</strong>
+                      <span>
+                        {interval.pack ? `${PACK_LABELS[interval.pack]} buyback` : 'Multiplier bonus'}
+                        {interval.txHash ? ` · ${interval.txHash.slice(0, 10)}...${interval.txHash.slice(-6)}` : ''}
+                      </span>
+                    </div>
+                    <span>{interval.timestamp ? new Date(interval.timestamp * 1000).toLocaleString() : ''}</span>
+                  </article>
+                ))}
+              </div>
+            )}
+            {bonusIntervals.length > 0 && (
+              <div className="interval-group interval-group--bonus">
+                <div className="interval-group-heading">
+                  <span>SBT bonus numbers</span>
+                  <strong>{compactNumber(entry.bonusTickets)} B</strong>
+                </div>
+                <p className="bonus-provisional-note">Bonus numbers are provisional until the final ledger is locked.</p>
+                {bonusIntervals.slice(0, 120).map((interval, index) => (
+                  <article className="interval-row interval-row--bonus" key={`${interval.start}-${interval.end}-${index}`}>
+                    <div>
+                      <strong>{intervalLabel(interval)}</strong>
+                      <span>Global draw number {formatTicketRange(interval.start, interval.end)}</span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
             {intervals.length > 120 && (
               <p className="soft-copy">Showing first 120 ranges. Export the ledger JSON for the full list.</p>
             )}
