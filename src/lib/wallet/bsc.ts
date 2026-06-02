@@ -33,8 +33,17 @@ export interface DrawStatus {
   prizeSlotCount: bigint
   winnerCount: bigint
   winnerTickets: bigint[]
+  revealedPrizeSlots: bigint[]
+  revealedTickets: bigint[]
+  winnerTicketsBySlot: bigint[]
   ownerAddress: string
   drawOperatorAddress: string
+  supportsSelectablePrizeSlots: boolean
+}
+
+export interface ContractRevealResult {
+  prizeSlotIndex: number
+  ticket: bigint
 }
 
 export async function connectInjectedWallet(networkKey: DrawNetworkKey): Promise<ConnectedWallet> {
@@ -149,6 +158,47 @@ export async function drawBatchWinners(
   return receipt?.hash || tx.hash
 }
 
+export async function drawPrizeSlotWinner(
+  provider: BrowserProvider,
+  contractAddress: string,
+  networkKey: DrawNetworkKey,
+  prizeSlotIndex: number,
+): Promise<string> {
+  await ensureBscNetwork(provider, networkKey)
+  const signer = await provider.getSigner()
+  const contract = new Contract(contractAddress, luckyDrawAbi, signer)
+  const tx = await contract.drawPrizeSlot(BigInt(prizeSlotIndex))
+  const receipt = await tx.wait()
+  return receipt?.hash || tx.hash
+}
+
+export async function drawPrizeSlotWinners(
+  provider: BrowserProvider,
+  contractAddress: string,
+  networkKey: DrawNetworkKey,
+  prizeSlotIndexes: number[],
+): Promise<string> {
+  await ensureBscNetwork(provider, networkKey)
+  const signer = await provider.getSigner()
+  const contract = new Contract(contractAddress, luckyDrawAbi, signer)
+  const tx = await contract.drawPrizeSlots(prizeSlotIndexes.map((slotIndex) => BigInt(slotIndex)))
+  const receipt = await tx.wait()
+  return receipt?.hash || tx.hash
+}
+
+export async function drawRandomPrizeSlotWinner(
+  provider: BrowserProvider,
+  contractAddress: string,
+  networkKey: DrawNetworkKey,
+): Promise<string> {
+  await ensureBscNetwork(provider, networkKey)
+  const signer = await provider.getSigner()
+  const contract = new Contract(contractAddress, luckyDrawAbi, signer)
+  const tx = await contract.drawRandomPrizeSlot()
+  const receipt = await tx.wait()
+  return receipt?.hash || tx.hash
+}
+
 export async function resetContractDraft(
   provider: BrowserProvider,
   contractAddress: string,
@@ -186,6 +236,22 @@ export async function readDrawStatus(
     contract.drawOperator(),
     winnerCount > 0n ? contract.winnerTickets() : Promise.resolve([]),
   ])
+  let supportsSelectablePrizeSlots = true
+  let revealedPrizeSlots: bigint[]
+  let revealedTickets: bigint[]
+  let winnerTicketsBySlot: bigint[]
+  try {
+    ;[revealedPrizeSlots, revealedTickets, winnerTicketsBySlot] = await Promise.all([
+      contract.revealedPrizeSlots(),
+      contract.revealedTickets(),
+      contract.winnerTicketsBySlot(),
+    ])
+  } catch {
+    supportsSelectablePrizeSlots = false
+    revealedPrizeSlots = winnerTickets.map((_: bigint, index: number) => BigInt(index))
+    revealedTickets = winnerTickets
+    winnerTicketsBySlot = Array.from({ length: Number(prizeSlotCount) }, (_, index) => winnerTickets[index] ?? 0n)
+  }
   return {
     finalized,
     requested,
@@ -197,7 +263,11 @@ export async function readDrawStatus(
     prizeSlotCount,
     winnerCount,
     winnerTickets,
+    revealedPrizeSlots,
+    revealedTickets,
+    winnerTicketsBySlot,
     ownerAddress,
     drawOperatorAddress,
+    supportsSelectablePrizeSlots,
   }
 }

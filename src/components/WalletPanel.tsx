@@ -208,6 +208,10 @@ export function WalletPanel({
         <p className="message wallet-warning-message">{copy.walletPanel.contractTotalMismatch}</p>
       )}
 
+      {status && !status.supportsSelectablePrizeSlots && (
+        <p className="message wallet-warning-message">{copy.drawReveal.selectableOrderUnavailable}</p>
+      )}
+
       {status?.winnerTickets.length ? (
         <div className="winner-strip">
           {status.winnerTickets.map((ticket) => (

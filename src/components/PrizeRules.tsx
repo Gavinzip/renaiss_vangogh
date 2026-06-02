@@ -7,8 +7,8 @@ import sbtSilverImage from '../assets/sbt-silver.webp'
 import type { AppCopy } from '../lib/i18n'
 import { CASH_PRIZE_POOL, CASH_PRIZES, GRAND_PRIZE, TOTAL_PRIZE_SLOTS } from '../lib/prizes/prizes'
 import { compactNumber } from '../lib/ticketing/display'
-import { SBT_TIERS } from '../lib/ticketing/rules'
-import type { SbtTier } from '../lib/ticketing/types'
+import { PACK_LABELS, PACK_WEIGHTS, SBT_TIERS } from '../lib/ticketing/rules'
+import type { PackKey, SbtTier } from '../lib/ticketing/types'
 import { PrizeGallery } from './PrizeGallery'
 
 const RULES_SCROLL_DURATION_MS = 1200
@@ -36,6 +36,12 @@ export function PrizeRules({ copy }: { copy: AppCopy }) {
       ? { label: copy.rules.prizeMeta.source, value: activePrize.source }
       : { label: copy.rules.prizeMeta.pool, value: 'pool' in activePrize ? activePrize.pool : '-' },
   ]
+
+  const packWeightRows = (Object.keys(PACK_WEIGHTS) as PackKey[]).map((pack) => ({
+    pack,
+    label: copy.packs[pack] || PACK_LABELS[pack],
+    weight: PACK_WEIGHTS[pack],
+  }))
 
   function scrollToRules(event: MouseEvent<HTMLAnchorElement>) {
     event.preventDefault()
@@ -135,6 +141,58 @@ export function PrizeRules({ copy }: { copy: AppCopy }) {
             {copy.rules.detailCopy}
           </p>
         </div>
+
+        <section className="rules-ticket-math-panel" aria-label={copy.rules.rawBonusGuide.title}>
+          <div className="rules-ticket-math-header">
+            <span className="gallery-catalogue">{copy.rules.rawBonusGuide.eyebrow}</span>
+            <h3>{copy.rules.rawBonusGuide.title}</h3>
+            <p>{copy.rules.rawBonusGuide.copy}</p>
+          </div>
+
+          <div className="rules-ticket-formula-grid">
+            {copy.rules.rawBonusGuide.formulas.map((formula, index) => (
+              <article className="rules-ticket-formula-card" key={formula.label}>
+                <span>{String(index + 1).padStart(2, '0')}</span>
+                <strong>{formula.label}</strong>
+                <code>{formula.value}</code>
+                <p>{formula.text}</p>
+              </article>
+            ))}
+          </div>
+
+          <div className="rules-ticket-math-data">
+            <div className="rules-ticket-weight-card">
+              <strong>{copy.rules.rawBonusGuide.packWeightsTitle}</strong>
+              <div>
+                {packWeightRows.map((row) => (
+                  <span key={row.pack}>
+                    {row.label}
+                    <b>x{row.weight}</b>
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className="rules-ticket-weight-card rules-ticket-weight-card--sbt">
+              <strong>{copy.rules.rawBonusGuide.sbtTitle}</strong>
+              <div>
+                <span>
+                  {copy.rules.rawBonusGuide.noBonusLabel}
+                  <b>{copy.rules.rawBonusGuide.noBonusValue}</b>
+                </span>
+                {[...SBT_TIERS].reverse().map((tier) => (
+                  <span key={tier.tier}>
+                    {copy.sbt.tiers[tier.tier]}
+                    <b>
+                      {tier.threshold}
+                      {copy.rules.thresholdSuffix} / x{tier.multiplier}
+                    </b>
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
 
         <div className="rules-detail-grid rules-detail-grid--editorial">
           <article className="rules-detail-card rules-process-card">

@@ -1,4 +1,4 @@
-import { Crown, FastForward, Loader2, Play, RotateCcw, Sparkles } from 'lucide-react'
+import { Crown, FastForward, Loader2, Play, RotateCcw, Shuffle, Sparkles } from 'lucide-react'
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { gsap } from 'gsap'
 import goldTicketImage from '../assets/gold-ticket-transparent.webp'
@@ -18,7 +18,7 @@ import { compactNumber } from '../lib/ticketing/display'
 import type { WalletIdentityMap } from '../lib/ticketing/identities'
 import type { RaffleLedger } from '../lib/ticketing/types'
 import { buildWinnerCandidateSnapshot, findWinnerCandidate, type WinnerCandidate } from '../lib/ticketing/winnerCandidates'
-import type { DrawStatus } from '../lib/wallet/bsc'
+import type { ContractRevealResult, DrawStatus } from '../lib/wallet/bsc'
 
 const DRAW_ANIMATION_SRC = '/draw-animation.mp4'
 
@@ -88,7 +88,8 @@ function buildWinnerResult({
 export function DrawReveal({
   runMode,
   onRunModeChange,
-  winnerTickets,
+  winnerTicketsBySlot,
+  revealedPrizeSlots,
   totalTickets,
   ledger,
   walletIdentities,
@@ -99,11 +100,13 @@ export function DrawReveal({
   isContractLedgerMismatch,
   onConnectWallet,
   onRequestDraw,
-  onDrawContractWinners,
+  onDrawContractPrizeSlots,
+  onDrawRandomContractPrizeSlot,
 }: {
   runMode: DrawRunMode
   onRunModeChange: (mode: DrawRunMode) => void
-  winnerTickets: bigint[]
+  winnerTicketsBySlot: bigint[]
+  revealedPrizeSlots: bigint[]
   totalTickets: number
   ledger: RaffleLedger
   walletIdentities: WalletIdentityMap
@@ -114,7 +117,8 @@ export function DrawReveal({
   isContractLedgerMismatch: boolean
   onConnectWallet: () => void
   onRequestDraw: () => Promise<void>
-  onDrawContractWinners: (count: number) => Promise<bigint[]>
+  onDrawContractPrizeSlots: (prizeSlotIndexes: number[]) => Promise<ContractRevealResult[]>
+  onDrawRandomContractPrizeSlot: () => Promise<ContractRevealResult[]>
 }) {
   const [phase, setPhase] = useState<'idle' | 'video' | 'reveal'>('idle')
   const [digitRevealState, setDigitRevealState] = useState({ ticketNumber: '', count: 0 })
@@ -149,18 +153,29 @@ export function DrawReveal({
     [copy],
   )
 
+  const revealedPrizeSlotIndexes = useMemo(
+    () =>
+      revealedPrizeSlots
+        .map((slotIndex) => Number(slotIndex))
+        .filter((slotIndex) => Number.isInteger(slotIndex) && slotIndex >= 0 && slotIndex < TOTAL_PRIZE_DRAW_SLOTS),
+    [revealedPrizeSlots],
+  )
   const contractResults = useMemo(
     () =>
-      winnerTickets.map((ticket, slotIndex) =>
-        buildWinnerResult({
-          identities: walletIdentities,
-          ledger,
-          slotIndex,
-          source: 'contract',
-          ticket,
-        }),
-      ),
-    [ledger, walletIdentities, winnerTickets],
+      revealedPrizeSlotIndexes
+        .map((slotIndex) => {
+          const ticket = winnerTicketsBySlot[slotIndex]
+          if (!ticket || ticket <= 0n) return null
+          return buildWinnerResult({
+            identities: walletIdentities,
+            ledger,
+            slotIndex,
+            source: 'contract',
+            ticket,
+          })
+        })
+        .filter((result): result is DrawWinnerResult => Boolean(result)),
+    [ledger, revealedPrizeSlotIndexes, walletIdentities, winnerTicketsBySlot],
   )
   const isLiveRunMode = isDrawNetworkKey(runMode)
   const visibleResults = isLiveRunMode ? (isSequenceRunning ? revealedContractResults : contractResults) : demoResults
@@ -179,9 +194,9 @@ export function DrawReveal({
   const selectedRemainingSlots = remainingSlotsForGroup(activePrizeGroupId, drawnSlots)
   const selectedRemainingSlotCount = selectedRemainingSlots.length
   const selectedGroupSlots = slotIndexesForPrizeGroup(activePrizeGroupId)
-  const nextContractSlot = winnerTickets.length
-  const nextRevealSlot = visibleResults.length
-  const isSelectedGroupNextToReveal = selectedGroupSlots.includes(nextRevealSlot)
+  const requiresSequentialContractReveal = Boolean(isLiveRunMode && drawStatus && !drawStatus.supportsSelectablePrizeSlots)
+  const nextSequentialContractSlot = revealedPrizeSlotIndexes.length
+  const isSelectedGroupNextToReveal = !requiresSequentialContractReveal || selectedGroupSlots.includes(nextSequentialContractSlot)
   const selectedBatchDrawCount = Math.min(Math.max(1, batchRevealCount), Math.max(1, selectedRemainingSlotCount))
   const selectedDrawCount = effectiveDrawMode === 'batch' ? selectedBatchDrawCount : Math.min(1, selectedRemainingSlotCount)
   const selectedGroupResults = visibleResults.filter((result) => result.prizeGroupId === activePrizeGroupId)
@@ -219,6 +234,17 @@ export function DrawReveal({
   const statusCopy = resultSource === 'demo' ? copy.drawReveal.demoNotice : resultSource === 'contract' ? copy.drawReveal.verified : copy.drawReveal.readyCopy
   const shouldConnectBeforeRun = isLiveRunMode && !hasWallet
   const isWaitingForContractRandomness = Boolean(isLiveRunMode && drawStatus?.requested && drawStatus.state < 3 && !drawStatus.fulfilled)
+  const canUseRandomPrizeSlot = Boolean(
+    isLiveRunMode &&
+      hasWallet &&
+      drawStatus?.supportsSelectablePrizeSlots &&
+      drawStatus.finalized &&
+      drawStatus.requested &&
+      drawStatus.state >= 3 &&
+      !drawStatus.fulfilled &&
+      !isAllComplete &&
+      !isContractLedgerMismatch,
+  )
   const isRunDisabled =
     isSequenceRunning ||
     isContractBusy ||
@@ -381,7 +407,7 @@ export function DrawReveal({
         setDemoResults((current) => (current.some((item) => item.slotIndex === result.slotIndex) ? current : [...current, result].sort((a, b) => a.slotIndex - b.slotIndex)))
       }
       if (result.source === 'contract') {
-        setRevealedContractResults((current) => (current.some((item) => item.slotIndex === result.slotIndex) ? current : [...current, result].sort((a, b) => a.slotIndex - b.slotIndex)))
+        setRevealedContractResults((current) => (current.some((item) => item.slotIndex === result.slotIndex) ? current : [...current, result]))
       }
       await wait(index === results.length - 1 ? 760 : 240)
     }
@@ -419,7 +445,11 @@ export function DrawReveal({
       if (isLiveRunMode && nextIncompletePrizeGroup) {
         setSelectedPrizeGroupId(nextIncompletePrizeGroup.id)
         setBatchRevealCount(nextIncompletePrizeGroup.slotCount > 1 ? nextIncompletePrizeGroup.slotCount : 1)
-        setSequenceMessage(`${copy.drawReveal.contractOrderNotice} ${copy.drawReveal.slotLabel} #${nextRevealSlot + 1}`)
+        setSequenceMessage(
+          requiresSequentialContractReveal
+            ? `${copy.drawReveal.contractOrderNotice} ${copy.drawReveal.slotLabel} #${nextSequentialContractSlot + 1}`
+            : copy.drawReveal.groupComplete,
+        )
         return
       }
 
@@ -468,8 +498,8 @@ export function DrawReveal({
           return
         }
 
-        if (!isSelectedGroupNextToReveal) {
-          setSequenceMessage(`${copy.drawReveal.contractOrderNotice} ${copy.drawReveal.slotLabel} #${nextRevealSlot + 1}`)
+        if (requiresSequentialContractReveal && !isSelectedGroupNextToReveal) {
+          setSequenceMessage(`${copy.drawReveal.contractOrderNotice} ${copy.drawReveal.slotLabel} #${nextSequentialContractSlot + 1}`)
           return
         }
 
@@ -483,18 +513,20 @@ export function DrawReveal({
           return
         }
 
-        if (nextContractSlot !== nextRevealSlot || !selectedGroupSlots.includes(nextContractSlot)) {
-          setSequenceMessage(`${copy.drawReveal.contractOrderNotice} ${copy.drawReveal.slotLabel} #${nextContractSlot + 1}`)
+        if (
+          requiresSequentialContractReveal &&
+          !selectedTargetSlots.every((slotIndex, index) => slotIndex === nextSequentialContractSlot + index)
+        ) {
+          setSequenceMessage(`${copy.drawReveal.contractOrderNotice} ${copy.drawReveal.slotLabel} #${nextSequentialContractSlot + 1}`)
           return
         }
 
-        const allowedCount = effectiveDrawMode === 'batch' ? Math.min(selectedDrawCount, selectedGroup.slotStart + selectedGroup.slotCount - nextContractSlot) : 1
-        const tickets = await onDrawContractWinners(allowedCount)
-        const contractReveals = tickets.map((ticket, index) =>
+        const revealResultsFromContract = await onDrawContractPrizeSlots(selectedTargetSlots)
+        const contractReveals = revealResultsFromContract.map(({ prizeSlotIndex, ticket }) =>
           buildWinnerResult({
             identities: walletIdentities,
             ledger,
-            slotIndex: nextContractSlot + index,
+            slotIndex: prizeSlotIndex,
             source: 'contract',
             ticket,
           }),
@@ -508,6 +540,75 @@ export function DrawReveal({
       }
 
       await revealResults(targetDemoResults())
+    } finally {
+      sequenceLockRef.current = false
+      setIsSequenceRunning(false)
+    }
+  }
+
+  async function runRandomPrizeSlotDraw() {
+    if (!isLiveRunMode || sequenceLockRef.current || isSequenceRunning || isContractBusy) return
+    setSequenceMessage('')
+
+    if (!hasWallet) {
+      setSequenceMessage(copy.drawReveal.contractModeNeedsWallet)
+      onConnectWallet()
+      return
+    }
+
+    if (isContractLedgerMismatch) {
+      setSequenceMessage(copy.walletPanel.contractTotalMismatch)
+      return
+    }
+
+    if (!drawStatus?.finalized) {
+      setSequenceMessage(copy.drawReveal.lockLedgerFirst)
+      return
+    }
+
+    if (!drawStatus.requested) {
+      setSequenceMessage(copy.drawReveal.requestVrfFirst)
+      await onRequestDraw()
+      return
+    }
+
+    if (drawStatus.state < 3) {
+      setSequenceMessage(copy.drawReveal.waitingForVrf)
+      return
+    }
+
+    if (!drawStatus.supportsSelectablePrizeSlots) {
+      setSequenceMessage(copy.drawReveal.selectableOrderUnavailable)
+      return
+    }
+
+    if (isAllComplete) {
+      setSequenceMessage(copy.drawReveal.allWinnersRevealed)
+      return
+    }
+
+    sequenceLockRef.current = true
+    setRevealedContractResults(contractResults)
+    setCurrentReveal(null)
+    setDigitRevealState({ ticketNumber: '', count: 0 })
+    setIsSequenceRunning(true)
+    try {
+      const revealResultsFromContract = await onDrawRandomContractPrizeSlot()
+      const contractReveals = revealResultsFromContract.map(({ prizeSlotIndex, ticket }) =>
+        buildWinnerResult({
+          identities: walletIdentities,
+          ledger,
+          slotIndex: prizeSlotIndex,
+          source: 'contract',
+          ticket,
+        }),
+      )
+      if (contractReveals.length === 0) {
+        setSequenceMessage(copy.drawReveal.noContractTickets)
+        return
+      }
+      setSelectedPrizeGroupId(contractReveals[0].prizeGroupId)
+      await revealResults(contractReveals)
     } finally {
       sequenceLockRef.current = false
       setIsSequenceRunning(false)
@@ -852,7 +953,7 @@ export function DrawReveal({
               <span>{copy.drawReveal.contractStatus}</span>
               <strong>{liveContractStatus}</strong>
               <small>
-                {copy.drawReveal.revealedCount}: {compactNumber(winnerTickets.length)} / {compactNumber(TOTAL_PRIZE_DRAW_SLOTS)}
+                {copy.drawReveal.revealedCount}: {compactNumber(drawStatus?.winnerCount ?? revealedPrizeSlotIndexes.length)} / {compactNumber(TOTAL_PRIZE_DRAW_SLOTS)}
               </small>
             </div>
           )}
@@ -862,6 +963,12 @@ export function DrawReveal({
               {copy.common.connectWallet}
             </button>
           )}
+          {isLiveRunMode && hasWallet && (
+            <button className="draw-reveal-run-secondary" type="button" onClick={runRandomPrizeSlotDraw} disabled={!canUseRandomPrizeSlot || isContractBusy || isSequenceRunning}>
+              <Shuffle size={16} />
+              {copy.drawReveal.randomPrizeSlot}
+            </button>
+          )}
           {runMode === 'showcase' && (
             <button className="draw-reveal-run-secondary" type="button" onClick={resetDemo} disabled={isSequenceRunning || demoResults.length === 0}>
               {copy.drawReveal.resetShowcase}
@@ -869,9 +976,17 @@ export function DrawReveal({
           )}
         </div>
 
-        {(sequenceMessage || (isLiveRunMode && isContractLedgerMismatch) || (isLiveRunMode && hasWallet && !isSelectedGroupNextToReveal && selectedRemainingSlots.length > 0)) && (
+        {(sequenceMessage ||
+          (isLiveRunMode && isContractLedgerMismatch) ||
+          (isLiveRunMode && hasWallet && requiresSequentialContractReveal && !isSelectedGroupNextToReveal && selectedRemainingSlots.length > 0) ||
+          (isLiveRunMode && hasWallet && drawStatus && !drawStatus.supportsSelectablePrizeSlots)) && (
           <p className="draw-reveal-sequence-message">
-            {sequenceMessage || (isContractLedgerMismatch ? copy.walletPanel.contractTotalMismatch : `${copy.drawReveal.contractOrderNotice} ${copy.drawReveal.slotLabel} #${nextRevealSlot + 1}`)}
+            {sequenceMessage ||
+              (isContractLedgerMismatch
+                ? copy.walletPanel.contractTotalMismatch
+                : drawStatus && !drawStatus.supportsSelectablePrizeSlots
+                  ? copy.drawReveal.selectableOrderUnavailable
+                  : `${copy.drawReveal.contractOrderNotice} ${copy.drawReveal.slotLabel} #${nextSequentialContractSlot + 1}`)}
           </p>
         )}
       </div>

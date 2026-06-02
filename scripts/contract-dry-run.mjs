@@ -141,7 +141,14 @@ await (await coordinator.fulfill(requestId, 12345678901234567890n)).wait()
 const readyStatus = await raffle.roundStatus()
 let winnerTickets = await raffle.winnerTickets()
 if (readyStatus.fulfilled) throw new Error('round was fulfilled before drawNext calls')
-if (winnerTickets.length !== 0) throw new Error('winner tickets should be empty before drawNext calls')
+if (winnerTickets.length !== 0) throw new Error('revealed winner tickets should be empty before reveal calls')
+let winnerTicketsBySlot = await raffle.winnerTicketsBySlot()
+let revealedPrizeSlots = await raffle.revealedPrizeSlots()
+let revealedTickets = await raffle.revealedTickets()
+if (winnerTicketsBySlot.length !== Number(prizeSlotCount)) throw new Error('winner tickets by slot should expose every prize slot')
+if (winnerTicketsBySlot.some((ticket) => ticket !== 0n)) throw new Error('winner tickets by slot should hide unrevealed slots')
+if (revealedPrizeSlots.length !== 0) throw new Error('revealed prize slots should be empty before reveal calls')
+if (revealedTickets.length !== 0) throw new Error('revealed tickets should be empty before reveal calls')
 
 let outsiderDrawNextBlocked = false
 try {
@@ -161,6 +168,36 @@ try {
 }
 if (!outsiderDrawBatchBlocked) {
   throw new Error('outsider drawBatch was not blocked')
+}
+
+let outsiderDrawPrizeSlotBlocked = false
+try {
+  await raffle.connect(outsider).drawPrizeSlot(1)
+} catch {
+  outsiderDrawPrizeSlotBlocked = true
+}
+if (!outsiderDrawPrizeSlotBlocked) {
+  throw new Error('outsider drawPrizeSlot was not blocked')
+}
+
+let outsiderDrawPrizeSlotsBlocked = false
+try {
+  await raffle.connect(outsider).drawPrizeSlots([1, 2])
+} catch {
+  outsiderDrawPrizeSlotsBlocked = true
+}
+if (!outsiderDrawPrizeSlotsBlocked) {
+  throw new Error('outsider drawPrizeSlots was not blocked')
+}
+
+let outsiderDrawRandomPrizeSlotBlocked = false
+try {
+  await raffle.connect(outsider).drawRandomPrizeSlot()
+} catch {
+  outsiderDrawRandomPrizeSlotBlocked = true
+}
+if (!outsiderDrawRandomPrizeSlotBlocked) {
+  throw new Error('outsider drawRandomPrizeSlot was not blocked')
 }
 
 let zeroBatchBlocked = false
@@ -183,13 +220,44 @@ if (!overBatchBlocked) {
   throw new Error('oversized drawBatch was not blocked')
 }
 
-const revealedTickets = []
-let expectedSlotIndex = 0
-const drawPlan = [1, 3, 4, 7, 6]
-for (const count of drawPlan) {
-  const drawTx = count === 1 ? await raffle.drawNext() : await raffle.drawBatch(count)
+let invalidPrizeSlotBlocked = false
+try {
+  await raffle.drawPrizeSlot(prizeSlotCount)
+} catch {
+  invalidPrizeSlotBlocked = true
+}
+if (!invalidPrizeSlotBlocked) {
+  throw new Error('invalid prize slot was not blocked')
+}
+
+let emptyPrizeSlotsBlocked = false
+try {
+  await raffle.drawPrizeSlots([])
+} catch {
+  emptyPrizeSlotsBlocked = true
+}
+if (!emptyPrizeSlotsBlocked) {
+  throw new Error('empty drawPrizeSlots was not blocked')
+}
+
+const revealedSlotIndexes = []
+const revealedTicketsBySlot = new Map()
+async function collectPrizeWinnerEvents(drawTx, expectedPrizeSlots = null) {
   const drawReceipt = await drawTx.wait()
-  const winnerEvents = drawReceipt.logs
+  const prizeWinnerEvents = drawReceipt.logs
+    .map((log) => {
+      try {
+        return raffle.interface.parseLog(log)
+      } catch {
+        return null
+      }
+    })
+    .filter((event) => event?.name === 'PrizeWinnerDrawn')
+  if (expectedPrizeSlots && prizeWinnerEvents.length !== expectedPrizeSlots.length) {
+    throw new Error(`expected ${expectedPrizeSlots.length} PrizeWinnerDrawn events, got ${prizeWinnerEvents.length}`)
+  }
+
+  const legacyWinnerEvents = drawReceipt.logs
     .map((log) => {
       try {
         return raffle.interface.parseLog(log)
@@ -198,34 +266,93 @@ for (const count of drawPlan) {
       }
     })
     .filter((event) => event?.name === 'WinnerDrawn')
-  if (winnerEvents.length !== count) {
-    throw new Error(`expected ${count} WinnerDrawn events, got ${winnerEvents.length}`)
+  if (legacyWinnerEvents.length !== prizeWinnerEvents.length) {
+    throw new Error(`expected legacy WinnerDrawn count ${prizeWinnerEvents.length}, got ${legacyWinnerEvents.length}`)
   }
 
-  for (const winnerEvent of winnerEvents) {
-    if (winnerEvent.args.slotIndex !== BigInt(expectedSlotIndex)) {
-      throw new Error(`expected slot ${expectedSlotIndex}, got ${winnerEvent.args.slotIndex}`)
+  for (let index = 0; index < prizeWinnerEvents.length; index++) {
+    const prizeWinnerEvent = prizeWinnerEvents[index]
+    const legacyWinnerEvent = legacyWinnerEvents[index]
+    const expectedRevealIndex = revealedSlotIndexes.length
+    const prizeSlotIndex = Number(prizeWinnerEvent.args.prizeSlotIndex)
+    const ticketNumber = prizeWinnerEvent.args.ticketNumber
+
+    if (prizeWinnerEvent.args.revealIndex !== BigInt(expectedRevealIndex)) {
+      throw new Error(`expected reveal index ${expectedRevealIndex}, got ${prizeWinnerEvent.args.revealIndex}`)
     }
-    revealedTickets.push(winnerEvent.args.ticketNumber)
-    expectedSlotIndex += 1
+    if (expectedPrizeSlots && prizeSlotIndex !== expectedPrizeSlots[index]) {
+      throw new Error(`expected prize slot ${expectedPrizeSlots[index]}, got ${prizeSlotIndex}`)
+    }
+    if (legacyWinnerEvent.args.slotIndex !== BigInt(prizeSlotIndex)) {
+      throw new Error(`legacy slot ${legacyWinnerEvent.args.slotIndex} did not match prize slot ${prizeSlotIndex}`)
+    }
+    if (legacyWinnerEvent.args.ticketNumber !== ticketNumber) {
+      throw new Error(`legacy ticket ${legacyWinnerEvent.args.ticketNumber} did not match prize event ticket ${ticketNumber}`)
+    }
+
+    revealedSlotIndexes.push(prizeSlotIndex)
+    revealedTicketsBySlot.set(prizeSlotIndex, ticketNumber)
   }
+}
+
+await collectPrizeWinnerEvents(await raffle.drawPrizeSlot(1), [1])
+
+let duplicatePrizeSlotBlocked = false
+try {
+  await raffle.drawPrizeSlot(1)
+} catch {
+  duplicatePrizeSlotBlocked = true
+}
+if (!duplicatePrizeSlotBlocked) {
+  throw new Error('duplicate prize slot reveal was not blocked')
+}
+
+await collectPrizeWinnerEvents(await raffle.drawPrizeSlots([11, 2, 12]), [11, 2, 12])
+await collectPrizeWinnerEvents(await raffle.drawRandomPrizeSlot())
+
+const allPrizeSlots = Array.from({ length: Number(prizeSlotCount) }, (_, index) => index)
+while (revealedSlotIndexes.length < Number(prizeSlotCount)) {
+  const remainingSlots = allPrizeSlots.filter((slotIndex) => !revealedSlotIndexes.includes(slotIndex))
+  const batch = remainingSlots.slice(0, 5)
+  await collectPrizeWinnerEvents(batch.length === 1 ? await raffle.drawPrizeSlot(batch[0]) : await raffle.drawPrizeSlots(batch), batch)
 }
 
 const status = await raffle.roundStatus()
 winnerTickets = await raffle.winnerTickets()
+winnerTicketsBySlot = await raffle.winnerTicketsBySlot()
+revealedPrizeSlots = await raffle.revealedPrizeSlots()
+revealedTickets = await raffle.revealedTickets()
 
 if (!status.fulfilled) throw new Error('round was not fulfilled after all drawNext calls')
 if (winnerTickets.length !== Number(prizeSlotCount)) {
-  throw new Error(`expected ${prizeSlotCount} winners, got ${winnerTickets.length}`)
+  throw new Error(`expected ${prizeSlotCount} revealed winners, got ${winnerTickets.length}`)
 }
-const unique = new Set(winnerTickets.map((ticket) => ticket.toString()))
+if (winnerTicketsBySlot.length !== Number(prizeSlotCount)) {
+  throw new Error(`expected ${prizeSlotCount} slot winners, got ${winnerTicketsBySlot.length}`)
+}
+if (revealedPrizeSlots.length !== Number(prizeSlotCount)) {
+  throw new Error(`expected ${prizeSlotCount} revealed prize slots, got ${revealedPrizeSlots.length}`)
+}
+if (revealedTickets.length !== Number(prizeSlotCount)) {
+  throw new Error(`expected ${prizeSlotCount} revealed tickets, got ${revealedTickets.length}`)
+}
+const unique = new Set(winnerTicketsBySlot.map((ticket) => ticket.toString()))
 if (unique.size !== Number(prizeSlotCount)) throw new Error('winner tickets are not unique')
-for (const ticket of winnerTickets) {
+for (const ticket of winnerTicketsBySlot) {
   if (ticket < 1n || ticket > totalTickets) throw new Error(`winner ticket out of range: ${ticket}`)
 }
-for (let index = 0; index < winnerTickets.length; index++) {
-  if (winnerTickets[index] !== revealedTickets[index]) {
-    throw new Error(`stored winner mismatch at slot ${index}`)
+for (let revealIndex = 0; revealIndex < Number(prizeSlotCount); revealIndex++) {
+  const prizeSlotIndex = Number(revealedPrizeSlots[revealIndex])
+  const ticketByReveal = revealedTickets[revealIndex]
+  const ticketBySlot = winnerTicketsBySlot[prizeSlotIndex]
+  if (winnerTickets[revealIndex] !== ticketByReveal) {
+    throw new Error(`winnerTickets legacy output mismatch at reveal ${revealIndex}`)
+  }
+  if (ticketByReveal !== ticketBySlot) {
+    throw new Error(`slot/reveal ticket mismatch at reveal ${revealIndex}`)
+  }
+  if (revealedTicketsBySlot.get(prizeSlotIndex) !== ticketBySlot) {
+    throw new Error(`event/storage ticket mismatch at slot ${prizeSlotIndex}`)
   }
 }
 
@@ -241,13 +368,20 @@ console.log(
       totalTickets: status.currentTotalTickets.toString(),
       prizeSlotCount: status.currentPrizeSlotCount.toString(),
       winnerCount: status.winnerCount.toString(),
-      firstFiveWinnerTickets: winnerTickets.slice(0, 5).map((ticket) => ticket.toString()),
+      firstFiveWinnerTicketsBySlot: winnerTicketsBySlot.slice(0, 5).map((ticket) => ticket.toString()),
+      firstFiveRevealedTickets: revealedTickets.slice(0, 5).map((ticket) => ticket.toString()),
+      revealedPrizeSlots: revealedPrizeSlots.map((slotIndex) => slotIndex.toString()),
       outsiderBlocked,
       outsiderDrawNextBlocked,
       outsiderDrawBatchBlocked,
+      outsiderDrawPrizeSlotBlocked,
+      outsiderDrawPrizeSlotsBlocked,
+      outsiderDrawRandomPrizeSlotBlocked,
       zeroBatchBlocked,
       overBatchBlocked,
-      drawPlan,
+      invalidPrizeSlotBlocked,
+      emptyPrizeSlotsBlocked,
+      duplicatePrizeSlotBlocked,
     },
     null,
     2,

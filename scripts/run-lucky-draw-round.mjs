@@ -42,6 +42,26 @@ function parseRoundStatus(status) {
   }
 }
 
+function parseRevealOrder(rawValue, prizeSlotCount) {
+  const slotCount = Number(prizeSlotCount)
+  if (!rawValue) return Array.from({ length: slotCount }, (_, index) => index)
+
+  const slots = rawValue
+    .split(',')
+    .map((value) => Number(value.trim()))
+    .filter((value) => Number.isInteger(value))
+  const uniqueSlots = new Set(slots)
+  if (slots.length !== uniqueSlots.size) throw new Error('reveal order contains duplicate prize slots.')
+  for (const slot of slots) {
+    if (slot < 0 || slot >= slotCount) throw new Error(`reveal order slot out of range: ${slot}`)
+  }
+
+  return [
+    ...slots,
+    ...Array.from({ length: slotCount }, (_, index) => index).filter((slot) => !uniqueSlots.has(slot)),
+  ]
+}
+
 async function waitForRandomnessReady(contract, timeoutMs, intervalMs) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
@@ -65,6 +85,7 @@ const ledgerHash = String(ledger.ledgerHash || '')
 const totalTickets = BigInt(ledger.totalFinalTickets || 0)
 const prizeSlotCount = BigInt(argValue('--prize-slots') || env.INITIAL_PRIZE_SLOT_COUNT || 21)
 const batchSize = Math.max(1, Number(argValue('--batch-size') || env.DRAW_BATCH_SIZE || 1))
+const revealOrder = parseRevealOrder(argValue('--reveal-order') || env.DRAW_REVEAL_ORDER || '', prizeSlotCount)
 if (!/^0x[a-fA-F0-9]{64}$/.test(ledgerHash)) throw new Error('ledgerHash must be bytes32')
 if (ledger.candidateSourceLimited) throw new Error('cannot run draw round with a limited candidate ledger')
 if (totalTickets < prizeSlotCount) throw new Error('ledger total tickets must cover all prize slots')
@@ -113,10 +134,18 @@ if (state < 3) throw new Error(`Round is not ready for drawNext. Current state: 
 
 status = parseRoundStatus(await raffle.roundStatus())
 const revealedTickets = []
+let revealedPrizeSlots = await raffle.revealedPrizeSlots()
 while (!status.fulfilled && status.winnerCount < prizeSlotCount) {
-  const remainingSlots = prizeSlotCount - status.winnerCount
-  const drawCount = Math.min(batchSize, Number(remainingSlots))
-  const drawTx = drawCount === 1 ? await raffle.drawNext() : await raffle.drawBatch(drawCount)
+  const alreadyRevealed = new Set(revealedPrizeSlots.map((slot) => Number(slot)))
+  const nextPrizeSlots = revealOrder
+    .filter((slot) => !alreadyRevealed.has(slot))
+    .slice(0, Math.min(batchSize, Number(prizeSlotCount - status.winnerCount)))
+  if (nextPrizeSlots.length === 0) throw new Error('no remaining prize slots to reveal.')
+
+  const drawTx =
+    nextPrizeSlots.length === 1
+      ? await raffle.drawPrizeSlot(nextPrizeSlots[0])
+      : await raffle.drawPrizeSlots(nextPrizeSlots)
   const receipt = await drawTx.wait()
   const winnerEvents = receipt.logs
     .map((log) => {
@@ -126,31 +155,55 @@ while (!status.fulfilled && status.winnerCount < prizeSlotCount) {
         return null
       }
     })
-    .filter((event) => event?.name === 'WinnerDrawn')
-  if (winnerEvents.length !== drawCount) {
-    throw new Error(`expected ${drawCount} WinnerDrawn events, got ${winnerEvents.length}.`)
+    .filter((event) => event?.name === 'PrizeWinnerDrawn')
+  if (winnerEvents.length !== nextPrizeSlots.length) {
+    throw new Error(`expected ${nextPrizeSlots.length} PrizeWinnerDrawn events, got ${winnerEvents.length}.`)
   }
-  for (const winnerEvent of winnerEvents) {
+  for (let index = 0; index < winnerEvents.length; index++) {
+    const winnerEvent = winnerEvents[index]
+    if (Number(winnerEvent.args.prizeSlotIndex) !== nextPrizeSlots[index]) {
+      throw new Error(`expected prize slot ${nextPrizeSlots[index]}, got ${winnerEvent.args.prizeSlotIndex}.`)
+    }
     revealedTickets.push(winnerEvent.args.ticketNumber.toString())
   }
   txs.push({
-    step: drawCount === 1 ? 'drawNext' : 'drawBatch',
-    count: drawCount,
-    firstSlotIndex: winnerEvents[0].args.slotIndex.toString(),
+    step: nextPrizeSlots.length === 1 ? 'drawPrizeSlot' : 'drawPrizeSlots',
+    count: nextPrizeSlots.length,
+    prizeSlotIndexes: winnerEvents.map((event) => event.args.prizeSlotIndex.toString()),
+    revealIndexes: winnerEvents.map((event) => event.args.revealIndex.toString()),
     ticketNumbers: winnerEvents.map((event) => event.args.ticketNumber.toString()),
     hash: drawTx.hash,
   })
   status = parseRoundStatus(await raffle.roundStatus())
+  revealedPrizeSlots = await raffle.revealedPrizeSlots()
 }
 
+const winnerTicketsBySlot = await raffle.winnerTicketsBySlot()
+revealedPrizeSlots = await raffle.revealedPrizeSlots()
+const storedRevealedTickets = await raffle.revealedTickets()
 const winnerTickets = await raffle.winnerTickets()
-const unique = new Set(winnerTickets.map((ticket) => ticket.toString()))
-if (winnerTickets.length !== Number(prizeSlotCount)) {
-  throw new Error(`expected ${prizeSlotCount} winners, got ${winnerTickets.length}`)
+const unique = new Set(winnerTicketsBySlot.map((ticket) => ticket.toString()))
+if (winnerTicketsBySlot.length !== Number(prizeSlotCount)) {
+  throw new Error(`expected ${prizeSlotCount} slot winners, got ${winnerTicketsBySlot.length}`)
+}
+if (storedRevealedTickets.length !== Number(prizeSlotCount)) {
+  throw new Error(`expected ${prizeSlotCount} revealed winners, got ${storedRevealedTickets.length}`)
+}
+if (revealedPrizeSlots.length !== Number(prizeSlotCount)) {
+  throw new Error(`expected ${prizeSlotCount} revealed prize slots, got ${revealedPrizeSlots.length}`)
 }
 if (unique.size !== Number(prizeSlotCount)) throw new Error('winner tickets are not unique')
-for (const ticket of winnerTickets) {
+for (const ticket of winnerTicketsBySlot) {
   if (ticket < 1n || ticket > totalTickets) throw new Error(`winner ticket out of range: ${ticket}`)
+}
+for (let revealIndex = 0; revealIndex < Number(prizeSlotCount); revealIndex++) {
+  const prizeSlotIndex = Number(revealedPrizeSlots[revealIndex])
+  if (winnerTickets[revealIndex] !== storedRevealedTickets[revealIndex]) {
+    throw new Error(`legacy winnerTickets mismatch at reveal ${revealIndex}`)
+  }
+  if (storedRevealedTickets[revealIndex] !== winnerTicketsBySlot[prizeSlotIndex]) {
+    throw new Error(`reveal/slot winner mismatch at reveal ${revealIndex}`)
+  }
 }
 
 console.log(
@@ -165,8 +218,11 @@ console.log(
       totalTickets: totalTickets.toString(),
       prizeSlotCount: prizeSlotCount.toString(),
       batchSize,
-      winnerCount: winnerTickets.length,
-      firstFiveWinnerTickets: winnerTickets.slice(0, 5).map((ticket) => ticket.toString()),
+      revealOrder,
+      winnerCount: winnerTicketsBySlot.length,
+      firstFiveWinnerTicketsBySlot: winnerTicketsBySlot.slice(0, 5).map((ticket) => ticket.toString()),
+      firstFiveRevealedTickets: storedRevealedTickets.slice(0, 5).map((ticket) => ticket.toString()),
+      revealedPrizeSlots: revealedPrizeSlots.map((slot) => slot.toString()),
       revealedTickets,
       txs,
       balanceBNB: ethers.formatEther(await provider.getBalance(wallet.address)),

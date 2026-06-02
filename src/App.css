@@ -3128,6 +3128,184 @@ body::after {
   line-height: 1.8;
 }
 
+.rules-ticket-math-panel {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  gap: 1.1rem;
+  overflow: hidden;
+  padding: clamp(1.2rem, 3vw, 2rem);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 24px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(239, 247, 255, 0.76)),
+    radial-gradient(34rem 24rem at 16% 0%, rgba(255, 213, 126, 0.22), transparent 66%),
+    radial-gradient(38rem 28rem at 90% 70%, rgba(56, 151, 255, 0.18), transparent 72%);
+  box-shadow:
+    0 24px 70px rgba(26, 46, 76, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.94);
+}
+
+.rules-ticket-math-panel::before {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  content: "";
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.12)),
+    url("./assets/van-gogh-starry-hero-bg.webp") center / cover no-repeat;
+  opacity: 0.28;
+  mix-blend-mode: multiply;
+}
+
+.rules-ticket-math-header {
+  display: grid;
+  max-width: 760px;
+  gap: 0.4rem;
+}
+
+.rules-ticket-math-header .gallery-catalogue {
+  margin-bottom: 0.3rem;
+}
+
+.rules-ticket-math-header h3 {
+  margin: 0;
+  color: #071326;
+  font-family: "Bodoni 72", Didot, "Baskerville", "Iowan Old Style", Georgia, serif;
+  font-size: clamp(2.2rem, 4vw, 4.2rem);
+  font-style: italic;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 0.98;
+}
+
+.rules-ticket-math-header p {
+  max-width: 68ch;
+  margin: 0;
+  color: #41556e;
+  font-size: 1rem;
+  font-weight: 650;
+  line-height: 1.7;
+}
+
+.rules-ticket-formula-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.rules-ticket-formula-card {
+  display: grid;
+  min-height: 176px;
+  align-content: start;
+  gap: 0.58rem;
+  padding: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.84);
+  border-radius: 18px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.9), rgba(238, 247, 255, 0.72)),
+    linear-gradient(120deg, rgba(35, 112, 219, 0.08), rgba(216, 163, 58, 0.12));
+  box-shadow:
+    0 16px 42px rgba(31, 67, 112, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.94);
+}
+
+.rules-ticket-formula-card > span {
+  width: max-content;
+  padding: 0.2rem 0.42rem;
+  border: 1px solid rgba(216, 163, 58, 0.26);
+  border-radius: 999px;
+  color: #8c6315;
+  background: rgba(255, 246, 224, 0.82);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+
+.rules-ticket-formula-card strong {
+  color: #071326;
+  font-size: 1.08rem;
+  font-weight: 940;
+  line-height: 1.1;
+}
+
+.rules-ticket-formula-card code {
+  display: block;
+  padding: 0.65rem 0.72rem;
+  border: 1px solid rgba(16, 62, 116, 0.1);
+  border-radius: 12px;
+  color: #0d4d99;
+  background: rgba(255, 255, 255, 0.74);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.rules-ticket-formula-card p {
+  margin: 0;
+  color: #566a82;
+  font-size: 0.86rem;
+  font-weight: 650;
+  line-height: 1.55;
+}
+
+.rules-ticket-math-data {
+  display: grid;
+  grid-template-columns: 0.9fr 1.1fr;
+  gap: 0.85rem;
+}
+
+.rules-ticket-weight-card {
+  display: grid;
+  gap: 0.78rem;
+  padding: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.84);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(247, 251, 255, 0.72)),
+    linear-gradient(105deg, rgba(255, 211, 137, 0.12), rgba(72, 184, 255, 0.13));
+}
+
+.rules-ticket-weight-card > strong {
+  color: #071326;
+  font-size: 0.86rem;
+  font-weight: 940;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.rules-ticket-weight-card > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.rules-ticket-weight-card span {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 0.48rem;
+  padding: 0.42rem 0.56rem;
+  border: 1px solid rgba(19, 76, 140, 0.09);
+  border-radius: 999px;
+  color: #263c59;
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.rules-ticket-weight-card b {
+  color: #0d4d99;
+  font-weight: 950;
+}
+
+.rules-ticket-weight-card--sbt span {
+  border-color: rgba(216, 163, 58, 0.16);
+}
+
 .rules-detail-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -3291,6 +3469,11 @@ body::after {
   .rules-detail-grid {
     grid-template-columns: 1fr;
   }
+
+  .rules-ticket-formula-grid,
+  .rules-ticket-math-data {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 760px) {
@@ -3354,6 +3537,25 @@ body::after {
   .gallery-rule-list > div {
     grid-template-columns: 1fr;
     gap: 0.25rem;
+  }
+
+  .rules-ticket-math-panel {
+    padding: 1rem;
+    border-radius: 20px;
+  }
+
+  .rules-ticket-formula-card {
+    min-height: 0;
+  }
+
+  .rules-ticket-weight-card > div {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .rules-ticket-weight-card span {
+    justify-content: space-between;
+    border-radius: 14px;
   }
 
   .gallery-meta-grid {

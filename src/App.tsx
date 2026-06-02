@@ -31,11 +31,15 @@ import {
   connectInjectedWallet,
   drawBatchWinners,
   drawNextWinner,
+  drawPrizeSlotWinner,
+  drawPrizeSlotWinners,
+  drawRandomPrizeSlotWinner,
   finalizeContractLedger,
   readDrawStatus,
   requestContractDraw,
   resetContractDraft,
   type ConnectedWallet,
+  type ContractRevealResult,
   type DrawStatus,
 } from './lib/wallet/bsc'
 import { TOTAL_PRIZE_DRAW_SLOTS } from './lib/draw/prizeSlots'
@@ -123,7 +127,6 @@ export default function App() {
   const [wallet, setWallet] = useState<ConnectedWallet | null>(null)
   const [walletError, setWalletError] = useState('')
   const [drawRunMode, setDrawRunMode] = useState<DrawRunMode>('showcase')
-  const [winnerTicketsByNetwork, setWinnerTicketsByNetwork] = useState<Partial<Record<DrawNetworkKey, bigint[]>>>({})
   const [drawStatusByNetwork, setDrawStatusByNetwork] = useState<Partial<Record<DrawNetworkKey, DrawStatus>>>({})
   const [drawTxHashesByNetwork, setDrawTxHashesByNetwork] = useState<Partial<Record<DrawNetworkKey, string[]>>>({})
   const [drawMessage, setDrawMessage] = useState('')
@@ -152,7 +155,8 @@ export default function App() {
   const activeDrawNetworkKey: DrawNetworkKey = isDrawNetworkKey(drawRunMode) ? drawRunMode : 'mainnet'
   const activeDrawNetwork = DRAW_NETWORKS[activeDrawNetworkKey]
   const activeStoredDrawStatus = drawStatusByNetwork[activeDrawNetworkKey] ?? null
-  const activeWinnerTickets = wallet ? (activeStoredDrawStatus?.winnerTickets ?? winnerTicketsByNetwork[activeDrawNetworkKey] ?? []) : []
+  const activeWinnerTicketsBySlot = wallet ? (activeStoredDrawStatus?.winnerTicketsBySlot ?? []) : []
+  const activeRevealedPrizeSlots = wallet ? (activeStoredDrawStatus?.revealedPrizeSlots ?? []) : []
   const activeDrawStatus = wallet ? activeStoredDrawStatus : null
   const activeDrawTxHashes = drawTxHashesByNetwork[activeDrawNetworkKey] ?? []
   const isActiveContractOwner = sameAddress(wallet?.address, activeDrawStatus?.ownerAddress)
@@ -387,7 +391,6 @@ export default function App() {
     const network = DRAW_NETWORKS[networkKey]
     const nextStatus = await readDrawStatus(activeWallet.provider, network.contractAddress, networkKey)
     setDrawStatusByNetwork((current) => ({ ...current, [networkKey]: nextStatus }))
-    setWinnerTicketsByNetwork((current) => ({ ...current, [networkKey]: nextStatus.winnerTickets }))
     return nextStatus
   }
 
@@ -411,7 +414,6 @@ export default function App() {
         const nextStatus = await readDrawStatus(activeWallet.provider, network.contractAddress, networkKey)
         if (cancelled) return
         setDrawStatusByNetwork((current) => ({ ...current, [networkKey]: nextStatus }))
-        setWinnerTicketsByNetwork((current) => ({ ...current, [networkKey]: nextStatus.winnerTickets }))
         if (nextStatus.state >= 3 || nextStatus.fulfilled) {
           trackEvent('draw_status_read', {
             network: networkKey,
@@ -719,12 +721,24 @@ export default function App() {
     }
   }
 
-  async function drawContractWinners(count: number, networkKey = activeDrawNetworkKey): Promise<bigint[]> {
+  function revealResultsFromStatus(status: DrawStatus, previousRevealCount: number): ContractRevealResult[] {
+    return status.revealedPrizeSlots
+      .slice(previousRevealCount)
+      .map((slotIndexValue, index) => {
+        const prizeSlotIndex = Number(slotIndexValue)
+        const ticket = status.winnerTicketsBySlot[prizeSlotIndex] ?? status.revealedTickets[previousRevealCount + index] ?? 0n
+        return { prizeSlotIndex, ticket }
+      })
+      .filter((result) => Number.isInteger(result.prizeSlotIndex) && result.prizeSlotIndex >= 0 && result.ticket > 0n)
+  }
+
+  async function drawContractPrizeSlots(prizeSlotIndexes: number[], networkKey = activeDrawNetworkKey): Promise<ContractRevealResult[]> {
     if (!wallet) {
       setDrawMessage(copy.walletPanel.connectFirst)
       trackEvent('draw_next', {
         network: networkKey,
-        requested_count: count,
+        requested_count: prizeSlotIndexes.length,
+        prize_slot_indexes: prizeSlotIndexes.join(','),
         status: 'blocked_no_wallet',
       })
       return []
@@ -735,17 +749,19 @@ export default function App() {
       setDrawMessage(copy.walletPanel.unauthorizedOperator)
       trackEvent('draw_next', {
         network: networkKey,
-        requested_count: count,
+        requested_count: prizeSlotIndexes.length,
+        prize_slot_indexes: prizeSlotIndexes.join(','),
         status: 'blocked_unauthorized_operator',
       })
       return []
     }
-    const currentStatus = drawStatusByNetwork[networkKey]
+    const currentStatus = drawStatusByNetwork[networkKey] ?? (await readStatusForWallet(wallet, networkKey))
     if (!currentStatus?.requested) {
       setDrawMessage(copy.walletPanel.requestVrfFirst)
       trackEvent('draw_next', {
         network: networkKey,
-        requested_count: count,
+        requested_count: prizeSlotIndexes.length,
+        prize_slot_indexes: prizeSlotIndexes.join(','),
         status: 'blocked_vrf_not_requested',
       })
       return []
@@ -754,41 +770,165 @@ export default function App() {
       setDrawMessage(copy.drawReveal.waitingForVrf)
       trackEvent('draw_next', {
         network: networkKey,
-        requested_count: count,
+        requested_count: prizeSlotIndexes.length,
+        prize_slot_indexes: prizeSlotIndexes.join(','),
         status: 'blocked_vrf_not_ready',
       })
       return []
     }
-    const networkWinnerTickets = winnerTicketsByNetwork[networkKey] ?? []
-    const safeCount = Math.max(1, Math.floor(count))
+
+    const safePrizeSlotIndexes = Array.from(
+      new Set(
+        prizeSlotIndexes
+          .map((slotIndex) => Math.floor(slotIndex))
+          .filter((slotIndex) => Number.isInteger(slotIndex) && slotIndex >= 0 && slotIndex < TOTAL_PRIZE_DRAW_SLOTS),
+      ),
+    )
+    if (safePrizeSlotIndexes.length === 0) {
+      setDrawMessage(copy.drawReveal.noContractTickets)
+      trackEvent('draw_next', {
+        network: networkKey,
+        requested_count: 0,
+        prize_slot_indexes: prizeSlotIndexes.join(','),
+        status: 'blocked_invalid_prize_slots',
+      })
+      return []
+    }
+
+    const previousRevealCount = currentStatus.revealedPrizeSlots.length
+    if (!currentStatus.supportsSelectablePrizeSlots) {
+      const isNextSequentialBatch = safePrizeSlotIndexes.every((slotIndex, index) => slotIndex === previousRevealCount + index)
+      if (!isNextSequentialBatch) {
+        setDrawMessage(copy.drawReveal.selectableOrderUnavailable)
+        trackEvent('draw_next', {
+          network: networkKey,
+          requested_count: safePrizeSlotIndexes.length,
+          prize_slot_indexes: safePrizeSlotIndexes.join(','),
+          status: 'blocked_legacy_contract_order',
+        })
+        return []
+      }
+    }
+
     setDrawBusy('drawNext')
     setDrawMessage('')
     trackEvent('draw_next', {
       network: networkKey,
-      requested_count: safeCount,
+      requested_count: safePrizeSlotIndexes.length,
+      prize_slot_indexes: safePrizeSlotIndexes.join(','),
       status: 'start',
     })
     try {
-      const previousCount = networkWinnerTickets.length
-      const hash =
-        safeCount === 1
+      const hash = currentStatus.supportsSelectablePrizeSlots
+        ? safePrizeSlotIndexes.length === 1
+          ? await drawPrizeSlotWinner(wallet.provider, network.contractAddress, networkKey, safePrizeSlotIndexes[0])
+          : await drawPrizeSlotWinners(wallet.provider, network.contractAddress, networkKey, safePrizeSlotIndexes)
+        : safePrizeSlotIndexes.length === 1
           ? await drawNextWinner(wallet.provider, network.contractAddress, networkKey)
-          : await drawBatchWinners(wallet.provider, network.contractAddress, networkKey, safeCount)
+          : await drawBatchWinners(wallet.provider, network.contractAddress, networkKey, safePrizeSlotIndexes.length)
       setDrawTxHashesByNetwork((current) => ({ ...current, [networkKey]: [hash, ...(current[networkKey] ?? [])] }))
       const nextStatus = await readStatusForWallet(wallet, networkKey)
-      const revealedTickets = nextStatus.winnerTickets.slice(previousCount, previousCount + safeCount)
+      const revealedResults = revealResultsFromStatus(nextStatus, previousRevealCount)
       setDrawMessage(`${copy.walletPanel.drawNextSent}: ${hash}`)
       trackEvent('draw_next', {
         network: networkKey,
-        requested_count: safeCount,
-        revealed_count: revealedTickets.length,
+        requested_count: safePrizeSlotIndexes.length,
+        prize_slot_indexes: safePrizeSlotIndexes.join(','),
+        revealed_count: revealedResults.length,
         status: 'success',
       })
-      return revealedTickets
+      return revealedResults
     } catch (error) {
       trackEvent('draw_next', {
         network: networkKey,
-        requested_count: safeCount,
+        requested_count: safePrizeSlotIndexes.length,
+        prize_slot_indexes: safePrizeSlotIndexes.join(','),
+        revealed_count: 0,
+        status: 'error',
+      })
+      setDrawMessage(error instanceof Error ? error.message : copy.walletPanel.drawNextFailed)
+      return []
+    } finally {
+      setDrawBusy(null)
+    }
+  }
+
+  async function drawRandomContractPrizeSlot(networkKey = activeDrawNetworkKey): Promise<ContractRevealResult[]> {
+    if (!wallet) {
+      setDrawMessage(copy.walletPanel.connectFirst)
+      trackEvent('draw_next', {
+        network: networkKey,
+        random_prize_slot: true,
+        status: 'blocked_no_wallet',
+      })
+      return []
+    }
+
+    const network = DRAW_NETWORKS[networkKey]
+    if (!isAuthorizedDrawOperator(wallet.address, network)) {
+      setDrawMessage(copy.walletPanel.unauthorizedOperator)
+      trackEvent('draw_next', {
+        network: networkKey,
+        random_prize_slot: true,
+        status: 'blocked_unauthorized_operator',
+      })
+      return []
+    }
+
+    const currentStatus = drawStatusByNetwork[networkKey] ?? (await readStatusForWallet(wallet, networkKey))
+    if (!currentStatus?.requested) {
+      setDrawMessage(copy.walletPanel.requestVrfFirst)
+      trackEvent('draw_next', {
+        network: networkKey,
+        random_prize_slot: true,
+        status: 'blocked_vrf_not_requested',
+      })
+      return []
+    }
+    if (currentStatus.state < 3) {
+      setDrawMessage(copy.drawReveal.waitingForVrf)
+      trackEvent('draw_next', {
+        network: networkKey,
+        random_prize_slot: true,
+        status: 'blocked_vrf_not_ready',
+      })
+      return []
+    }
+    if (!currentStatus.supportsSelectablePrizeSlots) {
+      setDrawMessage(copy.drawReveal.selectableOrderUnavailable)
+      trackEvent('draw_next', {
+        network: networkKey,
+        random_prize_slot: true,
+        status: 'blocked_legacy_contract_order',
+      })
+      return []
+    }
+
+    const previousRevealCount = currentStatus.revealedPrizeSlots.length
+    setDrawBusy('drawNext')
+    setDrawMessage('')
+    trackEvent('draw_next', {
+      network: networkKey,
+      random_prize_slot: true,
+      status: 'start',
+    })
+    try {
+      const hash = await drawRandomPrizeSlotWinner(wallet.provider, network.contractAddress, networkKey)
+      setDrawTxHashesByNetwork((current) => ({ ...current, [networkKey]: [hash, ...(current[networkKey] ?? [])] }))
+      const nextStatus = await readStatusForWallet(wallet, networkKey)
+      const revealedResults = revealResultsFromStatus(nextStatus, previousRevealCount)
+      setDrawMessage(`${copy.walletPanel.drawNextSent}: ${hash}`)
+      trackEvent('draw_next', {
+        network: networkKey,
+        random_prize_slot: true,
+        revealed_count: revealedResults.length,
+        status: 'success',
+      })
+      return revealedResults
+    } catch (error) {
+      trackEvent('draw_next', {
+        network: networkKey,
+        random_prize_slot: true,
         revealed_count: 0,
         status: 'error',
       })
@@ -965,7 +1105,8 @@ export default function App() {
               <DrawReveal
                 runMode={drawRunMode}
                 onRunModeChange={handleDrawRunModeChange}
-                winnerTickets={activeWinnerTickets}
+                winnerTicketsBySlot={activeWinnerTicketsBySlot}
+                revealedPrizeSlots={activeRevealedPrizeSlots}
                 totalTickets={currentFullLedger.totalFinalTickets}
                 ledger={currentFullLedger}
                 walletIdentities={walletIdentities}
@@ -976,7 +1117,8 @@ export default function App() {
                 isContractLedgerMismatch={isActiveContractLedgerMismatch}
                 onConnectWallet={() => connectBscWallet(activeDrawNetworkKey)}
                 onRequestDraw={() => requestDrawRound(activeDrawNetworkKey)}
-                onDrawContractWinners={(count) => drawContractWinners(count, activeDrawNetworkKey)}
+                onDrawContractPrizeSlots={(prizeSlotIndexes) => drawContractPrizeSlots(prizeSlotIndexes, activeDrawNetworkKey)}
+                onDrawRandomContractPrizeSlot={() => drawRandomContractPrizeSlot(activeDrawNetworkKey)}
               />
               <WalletPanel
                 network={activeDrawNetwork}
