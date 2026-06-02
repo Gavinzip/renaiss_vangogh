@@ -64,6 +64,7 @@ const ledger = JSON.parse(readFileSync(new URL(`../${ledgerPath}`, import.meta.u
 const ledgerHash = String(ledger.ledgerHash || '')
 const totalTickets = BigInt(ledger.totalFinalTickets || 0)
 const prizeSlotCount = BigInt(argValue('--prize-slots') || env.INITIAL_PRIZE_SLOT_COUNT || 21)
+const batchSize = Math.max(1, Number(argValue('--batch-size') || env.DRAW_BATCH_SIZE || 1))
 if (!/^0x[a-fA-F0-9]{64}$/.test(ledgerHash)) throw new Error('ledgerHash must be bytes32')
 if (ledger.candidateSourceLimited) throw new Error('cannot run draw round with a limited candidate ledger')
 if (totalTickets < prizeSlotCount) throw new Error('ledger total tickets must cover all prize slots')
@@ -113,9 +114,11 @@ if (state < 3) throw new Error(`Round is not ready for drawNext. Current state: 
 status = parseRoundStatus(await raffle.roundStatus())
 const revealedTickets = []
 while (!status.fulfilled && status.winnerCount < prizeSlotCount) {
-  const drawNextTx = await raffle.drawNext()
-  const receipt = await drawNextTx.wait()
-  const winnerEvent = receipt.logs
+  const remainingSlots = prizeSlotCount - status.winnerCount
+  const drawCount = Math.min(batchSize, Number(remainingSlots))
+  const drawTx = drawCount === 1 ? await raffle.drawNext() : await raffle.drawBatch(drawCount)
+  const receipt = await drawTx.wait()
+  const winnerEvents = receipt.logs
     .map((log) => {
       try {
         return raffle.interface.parseLog(log)
@@ -123,14 +126,19 @@ while (!status.fulfilled && status.winnerCount < prizeSlotCount) {
         return null
       }
     })
-    .find((event) => event?.name === 'WinnerDrawn')
-  if (!winnerEvent) throw new Error('WinnerDrawn event missing.')
-  revealedTickets.push(winnerEvent.args.ticketNumber.toString())
+    .filter((event) => event?.name === 'WinnerDrawn')
+  if (winnerEvents.length !== drawCount) {
+    throw new Error(`expected ${drawCount} WinnerDrawn events, got ${winnerEvents.length}.`)
+  }
+  for (const winnerEvent of winnerEvents) {
+    revealedTickets.push(winnerEvent.args.ticketNumber.toString())
+  }
   txs.push({
-    step: 'drawNext',
-    slotIndex: winnerEvent.args.slotIndex.toString(),
-    ticketNumber: winnerEvent.args.ticketNumber.toString(),
-    hash: drawNextTx.hash,
+    step: drawCount === 1 ? 'drawNext' : 'drawBatch',
+    count: drawCount,
+    firstSlotIndex: winnerEvents[0].args.slotIndex.toString(),
+    ticketNumbers: winnerEvents.map((event) => event.args.ticketNumber.toString()),
+    hash: drawTx.hash,
   })
   status = parseRoundStatus(await raffle.roundStatus())
 }
@@ -156,6 +164,7 @@ console.log(
       ledgerHash,
       totalTickets: totalTickets.toString(),
       prizeSlotCount: prizeSlotCount.toString(),
+      batchSize,
       winnerCount: winnerTickets.length,
       firstFiveWinnerTickets: winnerTickets.slice(0, 5).map((ticket) => ticket.toString()),
       revealedTickets,

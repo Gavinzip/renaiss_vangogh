@@ -120,6 +120,7 @@ export function DrawReveal({
   const [digitRevealState, setDigitRevealState] = useState({ ticketNumber: '', count: 0 })
   const [selectedPrizeGroupId, setSelectedPrizeGroupId] = useState<PrizeGroupId>('grand')
   const [drawMode, setDrawMode] = useState<PrizeDrawMode>('single')
+  const [batchRevealCount, setBatchRevealCount] = useState(10)
   const [demoResults, setDemoResults] = useState<DrawWinnerResult[]>([])
   const [revealedContractResults, setRevealedContractResults] = useState<DrawWinnerResult[]>([])
   const [currentReveal, setCurrentReveal] = useState<DrawWinnerResult | null>(null)
@@ -162,30 +163,40 @@ export function DrawReveal({
     [ledger, walletIdentities, winnerTickets],
   )
   const isLiveRunMode = isDrawNetworkKey(runMode)
-  const visibleResults = isLiveRunMode ? revealedContractResults : demoResults
-  const resultSource: 'contract' | 'demo' | 'empty' = isLiveRunMode ? (revealedContractResults.length > 0 ? 'contract' : 'empty') : demoResults.length > 0 ? 'demo' : 'empty'
+  const visibleResults = isLiveRunMode ? (isSequenceRunning ? revealedContractResults : contractResults) : demoResults
+  const resultSource: 'contract' | 'demo' | 'empty' = isLiveRunMode ? (visibleResults.length > 0 ? 'contract' : 'empty') : demoResults.length > 0 ? 'demo' : 'empty'
   const drawnSlots = useMemo(() => new Set(visibleResults.map((result) => result.slotIndex)), [visibleResults])
-  const selectedGroup = PRIZE_GROUPS.find((group) => group.id === selectedPrizeGroupId) ?? PRIZE_GROUPS[0]
+  const selectedStateGroupSlots = slotIndexesForPrizeGroup(selectedPrizeGroupId)
+  const selectedStateGroupHasRemainingSlots = selectedStateGroupSlots.some((slotIndex) => !drawnSlots.has(slotIndex))
+  const nextIncompletePrizeGroup = PRIZE_GROUPS.find((group) => slotIndexesForPrizeGroup(group.id).some((slotIndex) => !drawnSlots.has(slotIndex))) ?? null
+  const activePrizeGroupId =
+    isLiveRunMode && nextIncompletePrizeGroup && !selectedStateGroupHasRemainingSlots
+      ? nextIncompletePrizeGroup.id
+      : selectedPrizeGroupId
+  const selectedGroup = PRIZE_GROUPS.find((group) => group.id === activePrizeGroupId) ?? PRIZE_GROUPS[0]
   const selectedGroupCanBatch = selectedGroup.slotCount > 1
   const effectiveDrawMode: PrizeDrawMode = selectedGroupCanBatch ? drawMode : 'single'
-  const selectedRemainingSlots = remainingSlotsForGroup(selectedPrizeGroupId, drawnSlots)
-  const selectedGroupSlots = slotIndexesForPrizeGroup(selectedPrizeGroupId)
+  const selectedRemainingSlots = remainingSlotsForGroup(activePrizeGroupId, drawnSlots)
+  const selectedRemainingSlotCount = selectedRemainingSlots.length
+  const selectedGroupSlots = slotIndexesForPrizeGroup(activePrizeGroupId)
   const nextContractSlot = winnerTickets.length
   const nextRevealSlot = visibleResults.length
   const isSelectedGroupNextToReveal = selectedGroupSlots.includes(nextRevealSlot)
-  const selectedDrawCount = effectiveDrawMode === 'batch' ? selectedRemainingSlots.length : Math.min(1, selectedRemainingSlots.length)
-  const selectedGroupResults = visibleResults.filter((result) => result.prizeGroupId === selectedPrizeGroupId)
+  const selectedBatchDrawCount = Math.min(Math.max(1, batchRevealCount), Math.max(1, selectedRemainingSlotCount))
+  const selectedDrawCount = effectiveDrawMode === 'batch' ? selectedBatchDrawCount : Math.min(1, selectedRemainingSlotCount)
+  const selectedGroupResults = visibleResults.filter((result) => result.prizeGroupId === activePrizeGroupId)
   const selectedExistingRevealResults = effectiveDrawMode === 'batch' ? selectedGroupResults : selectedGroupResults.slice(0, 1)
-  const canRevealExistingSelection = selectedRemainingSlots.length === 0 && selectedExistingRevealResults.length > 0
+  const canRevealExistingSelection = !isLiveRunMode && selectedRemainingSlots.length === 0 && selectedExistingRevealResults.length > 0
   const selectedRunCount = canRevealExistingSelection ? selectedExistingRevealResults.length : selectedDrawCount
   const storedSelectedReveal = selectedGroupResults[0] ?? visibleResults[visibleResults.length - 1] ?? null
-  const activeReveal = currentReveal ?? storedSelectedReveal
+  const activeCurrentReveal = isLiveRunMode && !isSequenceRunning ? null : currentReveal
+  const activeReveal = activeCurrentReveal ?? storedSelectedReveal
   const winnerTicket = activeReveal?.ticket ?? null
   const ticketNumber = winnerTicket ?? ''
   const ticketAriaLabel = winnerTicket ? `#${ticketNumber}` : copy.drawReveal.readyState
   const ticketDigits = [...ticketNumber]
   const hasTicketNumber = winnerTicket !== null
-  const revealedDigitCount = digitRevealState.ticketNumber === ticketNumber ? digitRevealState.count : currentReveal ? 0 : ticketDigits.length
+  const revealedDigitCount = digitRevealState.ticketNumber === ticketNumber ? digitRevealState.count : activeCurrentReveal ? 0 : ticketDigits.length
   const isRevealComplete = !hasTicketNumber || revealedDigitCount >= ticketDigits.length
   const isAllComplete = visibleResults.length >= TOTAL_PRIZE_DRAW_SLOTS
   const candidateSnapshot = buildWinnerCandidateSnapshot({
@@ -207,11 +218,38 @@ export function DrawReveal({
         : copy.drawReveal.readyState
   const statusCopy = resultSource === 'demo' ? copy.drawReveal.demoNotice : resultSource === 'contract' ? copy.drawReveal.verified : copy.drawReveal.readyCopy
   const shouldConnectBeforeRun = isLiveRunMode && !hasWallet
-  const isRunDisabled = isSequenceRunning || isContractBusy || (isLiveRunMode && isContractLedgerMismatch) || (!shouldConnectBeforeRun && !canRevealExistingSelection && selectedRemainingSlots.length === 0)
+  const isWaitingForContractRandomness = Boolean(isLiveRunMode && drawStatus?.requested && drawStatus.state < 3 && !drawStatus.fulfilled)
+  const isRunDisabled =
+    isSequenceRunning ||
+    isContractBusy ||
+    isWaitingForContractRandomness ||
+    (isLiveRunMode && isAllComplete) ||
+    (isLiveRunMode && isContractLedgerMismatch) ||
+    (!shouldConnectBeforeRun && !canRevealExistingSelection && selectedRemainingSlots.length === 0)
+  const livePrimaryRunLabel = !drawStatus?.finalized
+    ? copy.drawReveal.lockLedgerFirst
+    : !drawStatus.requested
+      ? copy.drawReveal.startContractDraw
+      : drawStatus.state < 3
+        ? copy.drawReveal.waitingForRandomnessAction
+        : drawStatus.fulfilled || isAllComplete
+          ? copy.drawReveal.allWinnersRevealed
+          : copy.drawReveal.startContractDraw
+  const liveContractStatus = !drawStatus
+    ? copy.common.pending
+    : !drawStatus.finalized
+      ? copy.drawReveal.lockLedgerFirst
+      : !drawStatus.requested
+        ? copy.drawReveal.vrfNotRequested
+        : drawStatus.state < 3
+          ? copy.drawReveal.waitingForVrfShort
+          : drawStatus.fulfilled
+            ? copy.walletPanel.fulfilled
+            : copy.walletPanel.randomnessReady
   const primaryRunLabel = shouldConnectBeforeRun
     ? copy.common.connectWallet
     : isLiveRunMode
-      ? copy.drawReveal.startContractDraw
+      ? livePrimaryRunLabel
       : copy.drawReveal.startShowcaseDraw
 
   function candidateStrengthStyle(matchingTickets: number): CSSProperties {
@@ -350,7 +388,7 @@ export function DrawReveal({
   }
 
   function targetDemoResults() {
-    const targetSlots = (effectiveDrawMode === 'batch' ? selectedRemainingSlots : selectedRemainingSlots.slice(0, 1)).slice(0, selectedGroup.slotCount)
+    const targetSlots = selectedRemainingSlots.slice(0, selectedDrawCount)
     return targetSlots.map((slotIndex) =>
       buildWinnerResult({
         identities: walletIdentities,
@@ -378,6 +416,13 @@ export function DrawReveal({
     }
 
     if (selectedRemainingSlots.length === 0) {
+      if (isLiveRunMode && nextIncompletePrizeGroup) {
+        setSelectedPrizeGroupId(nextIncompletePrizeGroup.id)
+        setBatchRevealCount(nextIncompletePrizeGroup.slotCount > 1 ? nextIncompletePrizeGroup.slotCount : 1)
+        setSequenceMessage(`${copy.drawReveal.contractOrderNotice} ${copy.drawReveal.slotLabel} #${nextRevealSlot + 1}`)
+        return
+      }
+
       if (canRevealExistingSelection) {
         sequenceLockRef.current = true
         setIsSequenceRunning(true)
@@ -394,11 +439,32 @@ export function DrawReveal({
     }
 
     sequenceLockRef.current = true
+    if (isLiveRunMode) {
+      setRevealedContractResults(contractResults)
+      setCurrentReveal(null)
+      setDigitRevealState({ ticketNumber: '', count: 0 })
+    }
     setIsSequenceRunning(true)
     try {
       if (isLiveRunMode) {
         if (!hasWallet) {
           setSequenceMessage(copy.drawReveal.contractModeNeedsWallet)
+          return
+        }
+
+        if (!drawStatus?.finalized) {
+          setSequenceMessage(copy.drawReveal.lockLedgerFirst)
+          return
+        }
+
+        if (!drawStatus.requested) {
+          setSequenceMessage(copy.drawReveal.requestVrfFirst)
+          await onRequestDraw()
+          return
+        }
+
+        if (drawStatus.state < 3) {
+          setSequenceMessage(copy.drawReveal.waitingForVrf)
           return
         }
 
@@ -722,12 +788,15 @@ export function DrawReveal({
               const drawn = prizeGroupProgress(group.id)
               return (
                 <button
-                  className={selectedPrizeGroupId === group.id ? 'is-active' : ''}
+                  className={activePrizeGroupId === group.id ? 'is-active' : ''}
                   type="button"
                   role="tab"
-                  aria-selected={selectedPrizeGroupId === group.id}
+                  aria-selected={activePrizeGroupId === group.id}
                   key={group.id}
-                  onClick={() => setSelectedPrizeGroupId(group.id)}
+                  onClick={() => {
+                    setSelectedPrizeGroupId(group.id)
+                    setBatchRevealCount(group.slotCount > 1 ? group.slotCount : 1)
+                  }}
                 >
                   <strong>{prizeLabels[group.id]}</strong>
                   <small>
@@ -751,26 +820,46 @@ export function DrawReveal({
               {copy.drawReveal.batchDraw}
             </button>
           </div>
+          {effectiveDrawMode === 'batch' && selectedGroupCanBatch && (
+            <label className="draw-reveal-batch-count">
+              <span>{copy.drawReveal.batchCount}</span>
+              <input
+                type="number"
+                min={1}
+                max={Math.max(1, selectedRemainingSlotCount)}
+                value={selectedBatchDrawCount}
+                onChange={(event) => {
+                  const value = Number.parseInt(event.target.value, 10)
+                  const maxCount = Math.max(1, selectedRemainingSlotCount)
+                  const nextValue = Number.isFinite(value) ? Math.min(Math.max(1, value), maxCount) : 1
+                  setBatchRevealCount(nextValue)
+                }}
+              />
+            </label>
+          )}
           {!selectedGroupCanBatch && <small className="draw-reveal-control-hint">{copy.drawReveal.grandSingleOnly}</small>}
         </div>
 
         <div className="draw-reveal-runner">
           <div>
-            <strong>{prizeLabels[selectedPrizeGroupId]}</strong>
+            <strong>{prizeLabels[activePrizeGroupId]}</strong>
             <span>
               {copy.drawReveal.nextDrawCount}: {compactNumber(selectedRunCount)} / {compactNumber(selectedGroup.slotCount)}
             </span>
           </div>
+          {isLiveRunMode && (
+            <div className="draw-reveal-contract-status">
+              <span>{copy.drawReveal.contractStatus}</span>
+              <strong>{liveContractStatus}</strong>
+              <small>
+                {copy.drawReveal.revealedCount}: {compactNumber(winnerTickets.length)} / {compactNumber(TOTAL_PRIZE_DRAW_SLOTS)}
+              </small>
+            </div>
+          )}
           {isLiveRunMode && !hasWallet && (
             <button className="draw-reveal-run-secondary" type="button" onClick={onConnectWallet} disabled={isContractBusy || isSequenceRunning}>
               <Crown size={16} />
               {copy.common.connectWallet}
-            </button>
-          )}
-          {isLiveRunMode && (
-            <button className="draw-reveal-run-secondary" type="button" onClick={() => void onRequestDraw()} disabled={!hasWallet || isContractBusy || isSequenceRunning || isContractLedgerMismatch}>
-              <Crown size={16} />
-              {copy.drawReveal.requestRound}
             </button>
           )}
           {runMode === 'showcase' && (

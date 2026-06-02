@@ -59,6 +59,22 @@ export interface RaffleEntry {
   lastBuybackAt: number | null
   eventCount: number
   dataWarnings: string[]
+  ticketIntervalCount?: number
+  ticketIntervalsOffset?: number
+  ticketIntervalsLimit?: number
+  ticketIntervalsComplete?: boolean
+}
+
+export interface RaffleLeaderboardEntry {
+  rank: number
+  userAddress: string
+  sourceAddresses: string[]
+  rawTickets: number
+  bonusTickets: number
+  finalTickets: number
+  sbt: SbtTier
+  sbtMultiplier: number
+  eventCount: number
 }
 
 export interface RaffleLedger {
@@ -79,6 +95,7 @@ export interface RaffleLedger {
   bonusShuffleLocked?: boolean
   bonusShuffleLockedAt?: number | null
   entries: RaffleEntry[]
+  leaderboardEntries?: RaffleLeaderboardEntry[]
   notes: string[]
 }
 

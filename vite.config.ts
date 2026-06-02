@@ -5,6 +5,9 @@ import { readFileSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 let devLedgerCache: { ledger: unknown; mtimeMs: number } | null = null
+const DEFAULT_ENTRY_INTERVAL_LIMIT = 0
+const MAX_ENTRY_INTERVAL_LIMIT = 240
+const SUMMARY_LEADERBOARD_LIMIT = 10
 
 function readDevLedger() {
   const ledgerPath = resolve(process.cwd(), 'public/lucky-draw-ledger.json')
@@ -35,8 +38,27 @@ function devLedgerSummary(ledger: Record<string, unknown>) {
     bonusShuffleLocked: Boolean(ledger.bonusShuffleLocked),
     bonusShuffleLockedAt: Number(ledger.bonusShuffleLockedAt || 0),
     entries: [],
+    leaderboardEntries: devBuildLeaderboardEntries(ledger),
     notes: Array.isArray(ledger.notes) ? ledger.notes : [],
   }
+}
+
+function devBuildLeaderboardEntries(ledger: Record<string, unknown>) {
+  const entries = Array.isArray(ledger.entries) ? ledger.entries : []
+  return entries.slice(0, SUMMARY_LEADERBOARD_LIMIT).map((value, index) => {
+    const entry = value as Record<string, unknown>
+    return {
+      rank: Number(entry.rank || index + 1),
+      userAddress: entry.userAddress || '',
+      sourceAddresses: Array.isArray(entry.sourceAddresses) ? entry.sourceAddresses : [],
+      rawTickets: Number(entry.rawTickets || 0),
+      bonusTickets: Number(entry.bonusTickets || 0),
+      finalTickets: Number(entry.finalTickets || 0),
+      sbt: entry.sbt || 'none',
+      sbtMultiplier: Number(entry.sbtMultiplier || 1),
+      eventCount: Number(entry.eventCount || 0),
+    }
+  })
 }
 
 function devFindEntry(ledger: Record<string, unknown>, query: string) {
@@ -49,6 +71,47 @@ function devFindEntry(ledger: Record<string, unknown>, query: string) {
     const addresses = [entry.userAddress, ...(Array.isArray(entry.sourceAddresses) ? entry.sourceAddresses : [])]
     return addresses.some((address) => String(address || '').toLowerCase().includes(normalized))
   }) ?? null
+}
+
+function devParseEntryIntervalQuery(searchParams: URLSearchParams) {
+  const hasLimit = searchParams.has('intervalLimit')
+  const includeAll = searchParams.get('intervalLimit') === 'all'
+  const includeIntervals = includeAll || searchParams.get('includeIntervals') === '1' || hasLimit
+  const rawOffset = Number(searchParams.get('intervalOffset') || 0)
+  const rawLimit = Number(searchParams.get('intervalLimit') || DEFAULT_ENTRY_INTERVAL_LIMIT)
+
+  return {
+    includeIntervals,
+    intervalOffset: Number.isFinite(rawOffset) ? Math.max(0, Math.floor(rawOffset)) : 0,
+    intervalLimit: includeAll
+      ? 'all'
+      : Number.isFinite(rawLimit)
+        ? Math.min(MAX_ENTRY_INTERVAL_LIMIT, Math.max(0, Math.floor(rawLimit)))
+        : DEFAULT_ENTRY_INTERVAL_LIMIT,
+  }
+}
+
+function devBuildEntryResponse(entry: unknown, options: ReturnType<typeof devParseEntryIntervalQuery>) {
+  if (!entry || typeof entry !== 'object') return null
+
+  const value = entry as Record<string, unknown>
+  const allIntervals = Array.isArray(value.ticketIntervals) ? value.ticketIntervals : []
+  const intervalCount = allIntervals.length
+  const intervalOffset = options.includeIntervals ? Math.min(options.intervalOffset, intervalCount) : 0
+  const intervalLimit =
+    options.intervalLimit === 'all'
+      ? intervalCount
+      : Math.min(MAX_ENTRY_INTERVAL_LIMIT, Math.max(0, Math.floor(Number(options.intervalLimit))))
+  const ticketIntervals = options.includeIntervals ? allIntervals.slice(intervalOffset, intervalOffset + intervalLimit) : []
+
+  return {
+    ...value,
+    ticketIntervals,
+    ticketIntervalCount: intervalCount,
+    ticketIntervalsOffset: intervalOffset,
+    ticketIntervalsLimit: options.includeIntervals ? intervalLimit : 0,
+    ticketIntervalsComplete: intervalOffset + ticketIntervals.length >= intervalCount,
+  }
 }
 
 function sendDevJson(response: ServerResponse, status: number, payload: unknown) {
@@ -81,7 +144,9 @@ function raffleApiDevPlugin(): Plugin {
             sendDevJson(response, 400, { entry: null, error: 'wallet query is required' })
             return
           }
-          sendDevJson(response, 200, { entry: devFindEntry(ledger, walletQuery) })
+          sendDevJson(response, 200, {
+            entry: devBuildEntryResponse(devFindEntry(ledger, walletQuery), devParseEntryIntervalQuery(url.searchParams)),
+          })
         } catch (error) {
           sendDevJson(response, 503, {
             error: error instanceof Error ? error.message : 'Could not read lucky draw ledger.',

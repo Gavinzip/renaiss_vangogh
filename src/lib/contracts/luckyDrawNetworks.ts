@@ -14,21 +14,8 @@ export interface DrawNetworkConfig {
 }
 
 const DEFAULT_MAINNET_CONTRACT_ADDRESS = '0xd1Cb4a9858ce6216b272895D0BB1839bC7B4da0d'
-const DEFAULT_TESTNET_CONTRACT_ADDRESS = '0xd1Cb4a9858ce6216b272895D0BB1839bC7B4da0d'
+const DEFAULT_TESTNET_CONTRACT_ADDRESS = '0xAC18C773d6fc72D26Dadb3959f6aa16E8E9950A4'
 const DEFAULT_AUTHORIZED_OPERATOR_ADDRESS = '0x88b620388698490764fd85cfa482b5e3a8ad63b5'
-
-function envAddress(key: string, fallback: string) {
-  const value = String(import.meta.env[key] || '').trim()
-  return /^0x[a-fA-F0-9]{40}$/.test(value) ? value : fallback
-}
-
-function envAnyAddress(keys: string[], fallback: string) {
-  for (const key of keys) {
-    const value = String(import.meta.env[key] || '').trim()
-    if (/^0x[a-fA-F0-9]{40}$/.test(value)) return value
-  }
-  return fallback
-}
 
 export function sameAddress(left: string | null | undefined, right: string | null | undefined) {
   return Boolean(left && right && left.toLowerCase() === right.toLowerCase())
@@ -44,11 +31,8 @@ export const DRAW_NETWORKS: Record<DrawNetworkKey, DrawNetworkConfig> = {
     label: 'BSC Testnet',
     chainId: 97n,
     chainName: 'BNB Smart Chain Testnet',
-    contractAddress: envAddress('VITE_LUCKY_DRAW_TESTNET_ADDRESS', DEFAULT_TESTNET_CONTRACT_ADDRESS),
-    authorizedOperatorAddress: envAnyAddress(
-      ['VITE_LUCKY_DRAW_TESTNET_OPERATOR_ADDRESS', 'VITE_LUCKY_DRAW_OPERATOR_ADDRESS'],
-      DEFAULT_AUTHORIZED_OPERATOR_ADDRESS,
-    ),
+    contractAddress: DEFAULT_TESTNET_CONTRACT_ADDRESS,
+    authorizedOperatorAddress: DEFAULT_AUTHORIZED_OPERATOR_ADDRESS,
     explorerName: 'BscScan Testnet',
     rpcUrls: ['https://bsc-testnet-dataseed.bnbchain.org'],
     blockExplorerUrls: ['https://testnet.bscscan.com'],
@@ -58,11 +42,8 @@ export const DRAW_NETWORKS: Record<DrawNetworkKey, DrawNetworkConfig> = {
     label: 'BSC Mainnet',
     chainId: 56n,
     chainName: 'BNB Smart Chain',
-    contractAddress: envAddress('VITE_LUCKY_DRAW_MAINNET_ADDRESS', DEFAULT_MAINNET_CONTRACT_ADDRESS),
-    authorizedOperatorAddress: envAnyAddress(
-      ['VITE_LUCKY_DRAW_MAINNET_OPERATOR_ADDRESS', 'VITE_LUCKY_DRAW_OPERATOR_ADDRESS'],
-      DEFAULT_AUTHORIZED_OPERATOR_ADDRESS,
-    ),
+    contractAddress: DEFAULT_MAINNET_CONTRACT_ADDRESS,
+    authorizedOperatorAddress: DEFAULT_AUTHORIZED_OPERATOR_ADDRESS,
     explorerName: 'BscScan',
     rpcUrls: ['https://bsc-dataseed.binance.org'],
     blockExplorerUrls: ['https://bscscan.com'],

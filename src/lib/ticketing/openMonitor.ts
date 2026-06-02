@@ -9,6 +9,11 @@ const OPEN_MONITOR_LUCKY_DRAW_URL = '/open-monitor-api/lucky-draw/leaderboard'
 let fullLedgerCache: RaffleLedger | null = null
 let fullLedgerRequest: Promise<RaffleLedger> | null = null
 
+type RaffleEntryRequestOptions = {
+  intervalOffset?: number
+  intervalLimit?: number | 'all'
+}
+
 async function readJson(url: string): Promise<unknown> {
   const response = await fetch(url, { cache: 'no-store' })
   if (!response.ok) {
@@ -46,11 +51,19 @@ export async function loadFullRaffleLedger({ force = false }: { force?: boolean 
   return fullLedgerRequest
 }
 
-export async function loadRaffleEntry(query: string): Promise<RaffleEntry | null> {
+export async function loadRaffleEntry(query: string, options: RaffleEntryRequestOptions = {}): Promise<RaffleEntry | null> {
   const normalizedQuery = query.trim()
   if (!normalizedQuery) return null
 
-  const payload = (await readJson(`${RAFFLE_ENTRY_URL}?wallet=${encodeURIComponent(normalizedQuery)}`)) as {
+  const params = new URLSearchParams({ wallet: normalizedQuery })
+  if (typeof options.intervalOffset === 'number') {
+    params.set('intervalOffset', String(options.intervalOffset))
+  }
+  if (options.intervalLimit !== undefined) {
+    params.set('intervalLimit', String(options.intervalLimit))
+  }
+
+  const payload = (await readJson(`${RAFFLE_ENTRY_URL}?${params.toString()}`)) as {
     entry?: RaffleEntry | null
   }
   return payload.entry ?? null

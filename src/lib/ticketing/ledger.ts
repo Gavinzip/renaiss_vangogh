@@ -10,6 +10,7 @@ import type {
   PackCounts,
   RaffleEntry,
   RaffleLedger,
+  RaffleLeaderboardEntry,
   SbtTier,
   TicketInterval,
 } from './types'
@@ -23,6 +24,26 @@ function normalizeSbt(value: unknown): SbtTier {
   const text = String(value || 'none').trim().toLowerCase()
   if (text === 'bronze') return 'brown'
   return ['brown', 'silver', 'gold', 'rainbow'].includes(text) ? (text as SbtTier) : 'none'
+}
+
+function normalizeLeaderboardEntry(value: unknown, index: number): RaffleLeaderboardEntry | null {
+  if (!value || typeof value !== 'object') return null
+  const entry = value as Partial<RaffleLeaderboardEntry>
+  const userAddress = normalizeAddress(entry.userAddress)
+  if (!userAddress) return null
+  const sourceAddresses = (entry.sourceAddresses || [userAddress]).map(normalizeAddress).filter(Boolean)
+
+  return {
+    rank: Number(entry.rank || index + 1),
+    userAddress,
+    sourceAddresses,
+    rawTickets: toInteger(entry.rawTickets),
+    bonusTickets: toInteger(entry.bonusTickets),
+    finalTickets: toInteger(entry.finalTickets),
+    sbt: normalizeSbt(entry.sbt),
+    sbtMultiplier: Number(entry.sbtMultiplier || 1),
+    eventCount: toInteger(entry.eventCount),
+  }
 }
 
 export function withTicketRanges(entries: RaffleEntry[]): RaffleEntry[] {
@@ -118,6 +139,17 @@ export function buildLedgerFromOpenMonitor(data: OpenMonitorLuckyDrawResponse): 
     ledgerHash: null,
     drawContractAddress: null,
     entries,
+    leaderboardEntries: entries.slice(0, 10).map((entry) => ({
+      rank: entry.rank,
+      userAddress: entry.userAddress,
+      sourceAddresses: entry.sourceAddresses,
+      rawTickets: entry.rawTickets,
+      bonusTickets: entry.bonusTickets,
+      finalTickets: entry.finalTickets,
+      sbt: entry.sbt,
+      sbtMultiplier: entry.sbtMultiplier,
+      eventCount: entry.eventCount,
+    })),
     notes: [
       'This view is a fallback estimate from Open Monitor. Generate public/lucky-draw-ledger.json for verified buyback tickets.',
       'Ticket ranges are intentionally hidden in estimate mode because buyback timestamps are not verified.',
@@ -204,6 +236,21 @@ export function normalizeLoadedLedger(value: unknown): RaffleLedger | null {
       }
     })
     .filter((entry): entry is RaffleEntry => Boolean(entry))
+  const leaderboardEntries = Array.isArray(maybe.leaderboardEntries)
+    ? maybe.leaderboardEntries
+        .map((entry, index) => normalizeLeaderboardEntry(entry, index))
+        .filter((entry): entry is RaffleLeaderboardEntry => Boolean(entry))
+      : entries.slice(0, 10).map((entry) => ({
+        rank: entry.rank,
+        userAddress: entry.userAddress,
+        sourceAddresses: entry.sourceAddresses,
+        rawTickets: entry.rawTickets,
+        bonusTickets: entry.bonusTickets,
+        finalTickets: entry.finalTickets,
+        sbt: entry.sbt,
+        sbtMultiplier: entry.sbtMultiplier,
+        eventCount: entry.eventCount,
+      }))
 
   return {
     mode: maybe.mode,
@@ -229,6 +276,7 @@ export function normalizeLoadedLedger(value: unknown): RaffleLedger | null {
     bonusShuffleLocked: Boolean(maybe.bonusShuffleLocked),
     bonusShuffleLockedAt: toInteger(maybe.bonusShuffleLockedAt),
     entries,
+    leaderboardEntries,
     notes: maybe.notes || [],
   }
 }

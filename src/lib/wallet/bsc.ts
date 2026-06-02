@@ -26,12 +26,15 @@ export interface DrawStatus {
   finalized: boolean
   requested: boolean
   fulfilled: boolean
+  state: number
   totalTickets: bigint
   firstWinningTicket: bigint
   ledgerHash: string
   prizeSlotCount: bigint
   winnerCount: bigint
   winnerTickets: bigint[]
+  ownerAddress: string
+  drawOperatorAddress: string
 }
 
 export async function connectInjectedWallet(networkKey: DrawNetworkKey): Promise<ConnectedWallet> {
@@ -89,6 +92,23 @@ export async function ensureBscNetwork(provider: BrowserProvider | undefined, ne
   }
 }
 
+export async function finalizeContractLedger(
+  provider: BrowserProvider,
+  contractAddress: string,
+  networkKey: DrawNetworkKey,
+  ledgerHash: string,
+  totalTickets: number,
+  prizeSlotCount: number,
+  ledgerUri: string,
+): Promise<string> {
+  await ensureBscNetwork(provider, networkKey)
+  const signer = await provider.getSigner()
+  const contract = new Contract(contractAddress, luckyDrawAbi, signer)
+  const tx = await contract.finalizeLedger(ledgerHash, BigInt(totalTickets), BigInt(prizeSlotCount), ledgerUri)
+  const receipt = await tx.wait()
+  return receipt?.hash || tx.hash
+}
+
 export async function requestContractDraw(
   provider: BrowserProvider,
   contractAddress: string,
@@ -115,6 +135,33 @@ export async function drawNextWinner(
   return receipt?.hash || tx.hash
 }
 
+export async function drawBatchWinners(
+  provider: BrowserProvider,
+  contractAddress: string,
+  networkKey: DrawNetworkKey,
+  count: number,
+): Promise<string> {
+  await ensureBscNetwork(provider, networkKey)
+  const signer = await provider.getSigner()
+  const contract = new Contract(contractAddress, luckyDrawAbi, signer)
+  const tx = await contract.drawBatch(BigInt(count))
+  const receipt = await tx.wait()
+  return receipt?.hash || tx.hash
+}
+
+export async function resetContractDraft(
+  provider: BrowserProvider,
+  contractAddress: string,
+  networkKey: DrawNetworkKey,
+): Promise<string> {
+  await ensureBscNetwork(provider, networkKey)
+  const signer = await provider.getSigner()
+  const contract = new Contract(contractAddress, luckyDrawAbi, signer)
+  const tx = await contract.resetDraft()
+  const receipt = await tx.wait()
+  return receipt?.hash || tx.hash
+}
+
 export async function readDrawStatus(
   provider: BrowserProvider,
   contractAddress: string,
@@ -133,16 +180,24 @@ export async function readDrawStatus(
     winnerCount,
   ] =
     await contract.roundStatus()
-  const winnerTickets = winnerCount > 0n ? await contract.winnerTickets() : []
+  const [state, ownerAddress, drawOperatorAddress, winnerTickets] = await Promise.all([
+    contract.state(),
+    contract.owner(),
+    contract.drawOperator(),
+    winnerCount > 0n ? contract.winnerTickets() : Promise.resolve([]),
+  ])
   return {
     finalized,
     requested,
     fulfilled,
+    state: Number(state),
     totalTickets,
     firstWinningTicket,
     ledgerHash,
     prizeSlotCount,
     winnerCount,
     winnerTickets,
+    ownerAddress,
+    drawOperatorAddress,
   }
 }

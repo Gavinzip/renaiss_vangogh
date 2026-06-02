@@ -1,4 +1,4 @@
-import { Database, Loader2, LockKeyhole, Sparkles, Wallet } from 'lucide-react'
+import { Database, Loader2, LockKeyhole, RotateCcw, Wallet } from 'lucide-react'
 import type { DrawNetworkConfig } from '../lib/contracts/luckyDrawNetworks'
 import type { AppCopy } from '../lib/i18n'
 import { compactNumber } from '../lib/ticketing/display'
@@ -16,44 +16,67 @@ export function WalletPanel({
   busy,
   onConnectWallet,
   onRefreshStatus,
-  onRequestDraw,
-  onDrawNext,
+  onFinalizeLedger,
   copy,
   ledgerTotalTickets,
+  ledgerHash,
+  prizeSlotCount,
   transactionHashes,
   authorizedOperatorAddress,
   isAuthorizedOperator,
+  isContractOwner,
+  onResetRound,
 }: {
   network: DrawNetworkConfig
   wallet: ConnectedWallet | null
   status: DrawStatus | null
   message: string
-  busy: 'connect' | 'read' | 'draw' | 'drawNext' | null
+  busy: 'connect' | 'read' | 'finalize' | 'draw' | 'drawNext' | 'reset' | null
   onConnectWallet: () => void
   onRefreshStatus: () => void
-  onRequestDraw: () => void
-  onDrawNext: () => void
+  onFinalizeLedger: () => void
+  onResetRound: () => void
   copy: AppCopy
   ledgerTotalTickets: number
+  ledgerHash: string | null
+  prizeSlotCount: number
   transactionHashes: string[]
   authorizedOperatorAddress: string
   isAuthorizedOperator: boolean
+  isContractOwner: boolean
 }) {
   const drawState = status
     ? status.fulfilled
       ? copy.walletPanel.fulfilled
-      : status.requested
-        ? copy.walletPanel.requested
-        : copy.walletPanel.ready
+      : status.state >= 3
+        ? copy.walletPanel.randomnessReady
+        : status.requested
+          ? copy.walletPanel.requested
+          : status.finalized
+            ? copy.walletPanel.ready
+            : copy.walletPanel.disconnected
       : wallet
       ? copy.common.pending
       : copy.walletPanel.disconnected
   const isWalletOnSelectedNetwork = wallet?.chainId === network.chainId
   const hasTicketMismatch = Boolean(status && status.totalTickets !== BigInt(ledgerTotalTickets))
+  const hasLedgerHashMismatch = Boolean(status && ledgerHash && status.ledgerHash.toLowerCase() !== ledgerHash.toLowerCase())
+  const hasPrizeSlotMismatch = Boolean(status && status.prizeSlotCount !== BigInt(prizeSlotCount))
+  const hasLedgerMismatch = hasTicketMismatch || hasLedgerHashMismatch || hasPrizeSlotMismatch
+  const isLedgerCurrent = Boolean(status?.finalized && !hasLedgerMismatch)
+  const canResetRound = Boolean(
+    wallet &&
+      status &&
+      isContractOwner &&
+      status.state !== 2 &&
+      (status.finalized || status.requested || status.winnerCount > 0n || status.totalTickets > 0n),
+  )
   const explorerBaseUrl = network.blockExplorerUrls[0]?.replace(/\/$/, '') ?? ''
   const contractExplorerUrl = `${explorerBaseUrl}/address/${network.contractAddress}`
   const contractEventsUrl = `${contractExplorerUrl}#events`
-  const chainActionsDisabled = busy !== null || !wallet || !isAuthorizedOperator || hasTicketMismatch
+  const canFinalizeLedger = Boolean(wallet && isContractOwner && ledgerHash && !status?.requested && !isLedgerCurrent)
+  const finalizeDisabled = busy !== null || !canFinalizeLedger
+  const resetDisabled = busy !== null || !canResetRound
 
   return (
     <section className="panel wallet-panel">
@@ -92,13 +115,20 @@ export function WalletPanel({
           {busy === 'read' ? <Loader2 className="spin" size={18} /> : <Database size={18} />}
           {copy.walletPanel.read}
         </button>
-        <button onClick={onRequestDraw} disabled={chainActionsDisabled || Boolean(status?.requested)}>
-          {busy === 'draw' ? <Loader2 className="spin" size={18} /> : <Sparkles size={18} />}
-          {copy.walletPanel.draw}
+        <button onClick={onFinalizeLedger} disabled={finalizeDisabled}>
+          {busy === 'finalize' ? <Loader2 className="spin" size={18} /> : <LockKeyhole size={18} />}
+          {isLedgerCurrent ? copy.walletPanel.ledgerCurrent : copy.walletPanel.finalizeLedger}
         </button>
-        <button onClick={onDrawNext} disabled={chainActionsDisabled || !status?.requested || Boolean(status?.fulfilled)}>
-          {busy === 'drawNext' ? <Loader2 className="spin" size={18} /> : <Sparkles size={18} />}
-          {copy.walletPanel.drawNext}
+        <button
+          className="wallet-reset-button"
+          onClick={() => {
+            if (!window.confirm(copy.walletPanel.resetConfirm)) return
+            onResetRound()
+          }}
+          disabled={resetDisabled}
+        >
+          {busy === 'reset' ? <Loader2 className="spin" size={18} /> : <RotateCcw size={18} />}
+          {copy.walletPanel.resetRound}
         </button>
       </div>
 
@@ -110,6 +140,12 @@ export function WalletPanel({
           <strong>{formatAddress(wallet.address)}</strong>
           <span>{copy.walletPanel.authorizedOperator}</span>
           <strong className={isAuthorizedOperator ? '' : 'is-warning'}>{formatAddress(authorizedOperatorAddress)}</strong>
+          {status && (
+            <>
+              <span>{copy.walletPanel.contractOwner}</span>
+              <strong className={isContractOwner ? '' : 'is-warning'}>{formatAddress(status.ownerAddress)}</strong>
+            </>
+          )}
         </div>
       ) : (
         <p className="wallet-status-preview">{copy.walletPanel.statusPreview}</p>
@@ -117,6 +153,14 @@ export function WalletPanel({
 
       {wallet && !isAuthorizedOperator && (
         <p className="message wallet-warning-message">{copy.walletPanel.unauthorizedOperator}</p>
+      )}
+
+      {wallet && status && !isContractOwner && status.state !== 2 && (
+        <p className="message wallet-warning-message">{copy.walletPanel.ownerOnlyAction}</p>
+      )}
+
+      {status?.state === 2 && (
+        <p className="message wallet-warning-message">{copy.walletPanel.resetBlockedDuringRequest}</p>
       )}
 
       {status && (
@@ -145,10 +189,22 @@ export function WalletPanel({
                 : `0 / ${compactNumber(status.prizeSlotCount)}`}
             </strong>
           </div>
+          <div>
+            <span>{copy.walletPanel.prizeSlots}</span>
+            <strong>{compactNumber(status.prizeSlotCount)}</strong>
+          </div>
         </div>
       )}
 
-      {hasTicketMismatch && (
+      {ledgerHash && !status && wallet && isAuthorizedOperator && (
+        <p className="message">{copy.walletPanel.lockLedgerFirst}</p>
+      )}
+
+      {!ledgerHash && (
+        <p className="message wallet-warning-message">{copy.walletPanel.ledgerHashMissing}</p>
+      )}
+
+      {hasLedgerMismatch && (
         <p className="message wallet-warning-message">{copy.walletPanel.contractTotalMismatch}</p>
       )}
 

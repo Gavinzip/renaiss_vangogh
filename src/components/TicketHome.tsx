@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Copy, Gem, Search, ShieldCheck, Sparkles, Ticket, Trophy } from 'lucide-react'
 import sbtBrownImage from '../assets/sbt-brown.webp'
 import sbtGoldImage from '../assets/sbt-gold.webp'
@@ -8,15 +8,19 @@ import sbtLevelsImage from '../assets/van-gogh-sbt-levels-source.webp'
 import type { AppCopy, LanguageCode } from '../lib/i18n'
 import { packLabel } from '../lib/i18n'
 import { anyPrizeProbability, compactNumber, intervalLabel, percent, probability } from '../lib/ticketing/display'
+import type { WalletIdentityMap } from '../lib/ticketing/identities'
 import { formatAddress, formatTicketRange, PACK_LABELS, PACK_WEIGHTS } from '../lib/ticketing/rules'
-import type { RaffleEntry, RaffleLedger, SbtTier, TicketInterval } from '../lib/ticketing/types'
+import type { RaffleEntry, RaffleLeaderboardEntry, RaffleLedger, SbtTier, TicketInterval } from '../lib/ticketing/types'
 import { HoloPrizeCard } from './HoloPrizeCard'
 import { RollingReveal } from './RollingReveal'
 
 const RESULT_REVEAL_DELAYS_MS = [320, 1320, 2320, 3320]
-const LEDGER_SCAN_MS = 900
+const LEDGER_SCAN_MS = 180
+const INTERVAL_PAGE_SIZE = 120
+const EMPTY_INTERVALS: TicketInterval[] = []
 
 type SearchPhase = 'idle' | 'scanning' | 'settled'
+type IntervalLoadState = 'idle' | 'loading' | 'ready' | 'failed'
 type TicketSearchSource = 'manual' | 'connected_wallet'
 
 type TicketSearchDetails = {
@@ -36,6 +40,11 @@ type TicketSearchResultDetails = {
 type CopyTicketRangesDetails = {
   interval_count: number
   status: 'success' | 'failed'
+}
+
+type LoadEntryIntervalsRequest = {
+  offset: number
+  limit: number | 'all'
 }
 
 const SBT_TIER_IMAGES: Partial<Record<SbtTier, string>> = {
@@ -85,12 +94,132 @@ function formatRefreshTime(value: number, language: LanguageCode) {
   }).format(new Date(value))
 }
 
+function sbtLabel(entry: RaffleLeaderboardEntry, copy: AppCopy): string {
+  if (entry.sbt === 'none') return copy.sbt.tiers.none
+  return `${copy.sbt.tiers[entry.sbt]} x${entry.sbtMultiplier}`
+}
+
+function leaderboardStyle(entry: RaffleLeaderboardEntry, totalTickets: number): CSSProperties {
+  const share = totalTickets > 0 ? Math.min(100, Math.max(0, (entry.finalTickets / totalTickets) * 100)) : 0
+  return { '--leader-share': `${share}%` } as CSSProperties
+}
+
+function leaderboardIdentity(entry: RaffleLeaderboardEntry, walletIdentities: WalletIdentityMap) {
+  const addresses = [entry.userAddress, ...(entry.sourceAddresses ?? [])]
+  for (const address of addresses) {
+    const identity = walletIdentities[address.toLowerCase()]
+    const displayName = identity?.username?.trim() || identity?.linkedTwitter?.trim() || identity?.linkedDiscord?.trim()
+    if (displayName) {
+      return {
+        displayName,
+        identityAddress: address,
+        hasIdentity: true,
+      }
+    }
+  }
+
+  return {
+    displayName: formatAddress(entry.userAddress),
+    identityAddress: entry.userAddress,
+    hasIdentity: false,
+  }
+}
+
+function TopTenLeaderboard({
+  ledger,
+  walletIdentities,
+  copy,
+}: {
+  ledger: RaffleLedger
+  walletIdentities: WalletIdentityMap
+  copy: AppCopy
+}) {
+  const entries = ledger.leaderboardEntries ?? []
+  if (entries.length === 0) return null
+
+  const podium = entries.slice(0, 3)
+  const rest = entries.slice(3, 10)
+
+  return (
+    <section id="top-collectors" className="van-gogh-leaderboard" aria-label={copy.ticketHome.leaderboardTitle}>
+      <div className="van-gogh-leaderboard__header">
+        <div>
+          <span className="eyebrow">{copy.ticketHome.leaderboardEyebrow}</span>
+          <h2>{copy.ticketHome.leaderboardTitle}</h2>
+          <p>{copy.ticketHome.leaderboardCopy}</p>
+        </div>
+        <div className="van-gogh-leaderboard__total">
+          <span>{copy.ticketHome.totalFinalTickets}</span>
+          <strong>{compactNumber(ledger.totalFinalTickets)}</strong>
+        </div>
+      </div>
+
+      <div className="van-gogh-leaderboard__podium">
+        {podium.map((entry) => {
+          const identity = leaderboardIdentity(entry, walletIdentities)
+          return (
+            <article
+              className={`leader-podium leader-podium--rank-${entry.rank}`}
+              key={entry.userAddress}
+              style={leaderboardStyle(entry, ledger.totalFinalTickets)}
+            >
+              <div className="leader-podium__rank">
+                <Trophy size={18} />
+                <span>#{entry.rank}</span>
+              </div>
+              <strong>{compactNumber(entry.finalTickets)}</strong>
+              <span className="leader-podium__name">{identity.displayName}</span>
+              <small className="leader-podium__address">{formatAddress(identity.identityAddress)}</small>
+              <small className="leader-podium__stats">
+                {compactNumber(entry.rawTickets)} R · {compactNumber(entry.bonusTickets)} B · {sbtLabel(entry, copy)}
+              </small>
+              <div className="leader-share-bar" aria-hidden="true" />
+            </article>
+          )
+        })}
+      </div>
+
+      {rest.length > 0 && (
+        <div className="van-gogh-leaderboard__rows">
+          {rest.map((entry) => {
+            const identity = leaderboardIdentity(entry, walletIdentities)
+            return (
+              <article className="leader-row" key={entry.userAddress} style={leaderboardStyle(entry, ledger.totalFinalTickets)}>
+                <div className="leader-row__rank">
+                  <span>{copy.ticketHome.leaderboardRank}</span>
+                  <strong>#{entry.rank}</strong>
+                </div>
+                <div className="leader-row__wallet">
+                  <strong>{identity.displayName}</strong>
+                  <span>
+                    {formatAddress(identity.identityAddress)} · {compactNumber(entry.eventCount)} {copy.ticketHome.leaderboardEvents} ·{' '}
+                    {sbtLabel(entry, copy)}
+                  </span>
+                </div>
+                <div className="leader-row__tickets">
+                  <strong>{compactNumber(entry.finalTickets)}</strong>
+                  <span>
+                    {copy.ticketHome.leaderboardShare}{' '}
+                    {ledger.totalFinalTickets > 0 ? `${((entry.finalTickets / ledger.totalFinalTickets) * 100).toFixed(2)}%` : '0%'}
+                  </span>
+                </div>
+                <div className="leader-share-bar" aria-hidden="true" />
+              </article>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+}
+
 export function TicketHome({
   ledger,
   entry,
   query,
   setQuery,
   connectedAddress,
+  walletIdentities,
   copy,
   language,
   lastLedgerRefreshAt,
@@ -98,6 +227,7 @@ export function TicketHome({
   onHiddenDrawUnlock,
   onCopyTicketRanges,
   onResolveEntry,
+  onLoadEntryIntervals,
   onTicketSearch,
   onTicketSearchResult,
 }: {
@@ -106,6 +236,7 @@ export function TicketHome({
   query: string
   setQuery: (value: string) => void
   connectedAddress?: string
+  walletIdentities: WalletIdentityMap
   copy: AppCopy
   language: LanguageCode
   lastLedgerRefreshAt: number
@@ -113,15 +244,20 @@ export function TicketHome({
   onHiddenDrawUnlock?: () => void
   onCopyTicketRanges?: (details: CopyTicketRangesDetails) => void
   onResolveEntry?: (query: string) => Promise<RaffleEntry | null>
+  onLoadEntryIntervals?: (query: string, request: LoadEntryIntervalsRequest) => Promise<RaffleEntry | null>
   onTicketSearch?: (details: TicketSearchDetails) => void
   onTicketSearchResult?: (details: TicketSearchResultDetails) => void
 }) {
-  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const [copyState, setCopyState] = useState<'idle' | 'loading' | 'copied' | 'failed'>('idle')
   const [resultRevealRun, setResultRevealRun] = useState(0)
   const [submittedQuery, setSubmittedQuery] = useState('')
   const [searchPhase, setSearchPhase] = useState<SearchPhase>('idle')
   const [searchError, setSearchError] = useState('')
+  const [intervalEntry, setIntervalEntry] = useState<RaffleEntry | null>(null)
+  const [intervalLoadState, setIntervalLoadState] = useState<IntervalLoadState>('idle')
+  const [intervalLoadError, setIntervalLoadError] = useState('')
   const scanTimerRef = useRef<number | null>(null)
+  const intervalRequestRef = useRef(0)
   const reportedSearchResultRef = useRef('')
   const searchRequestRef = useRef(0)
   const normalizedQuery = query.trim()
@@ -129,9 +265,30 @@ export function TicketHome({
   const isScanningLedger = isSubmittedQuery && searchPhase === 'scanning'
   const hasSettledSearch = isSubmittedQuery && searchPhase === 'settled'
   const displayEntry = hasSettledSearch ? entry : null
-  const intervals = displayEntry?.ticketIntervals ?? []
-  const rawIntervals = intervals.filter((interval) => interval.namespace !== 'bonus' && interval.source !== 'sbt-bonus')
-  const bonusIntervals = intervals.filter((interval) => interval.namespace === 'bonus' || interval.source === 'sbt-bonus')
+  const totalIntervalCount = displayEntry?.ticketIntervalCount ?? displayEntry?.ticketIntervals.length ?? 0
+  const intervals = useMemo(
+    () => intervalEntry?.ticketIntervals ?? displayEntry?.ticketIntervals ?? EMPTY_INTERVALS,
+    [displayEntry?.ticketIntervals, intervalEntry?.ticketIntervals],
+  )
+  const hasMoreIntervals = Boolean(displayEntry && onLoadEntryIntervals && intervals.length < totalIntervalCount)
+  const isLoadingInitialIntervals = intervalLoadState === 'loading' && intervals.length === 0
+  const { rawIntervals, bonusIntervals } = useMemo(() => {
+    const nextRawIntervals: TicketInterval[] = []
+    const nextBonusIntervals: TicketInterval[] = []
+
+    for (const interval of intervals) {
+      if (interval.namespace === 'bonus' || interval.source === 'sbt-bonus') {
+        nextBonusIntervals.push(interval)
+      } else {
+        nextRawIntervals.push(interval)
+      }
+    }
+
+    return {
+      rawIntervals: nextRawIntervals,
+      bonusIntervals: nextBonusIntervals,
+    }
+  }, [intervals])
   const grandPrizeOdds = probability(displayEntry, ledger.totalFinalTickets)
   const anyPrizeOdds = anyPrizeProbability(displayEntry, ledger.totalFinalTickets)
   const activeSbtImage = displayEntry ? SBT_TIER_IMAGES[displayEntry.sbt] : undefined
@@ -150,8 +307,50 @@ export function TicketHome({
     return () => {
       if (scanTimerRef.current) window.clearTimeout(scanTimerRef.current)
       searchRequestRef.current += 1
+      intervalRequestRef.current += 1
     }
   }, [])
+
+  useEffect(() => {
+    intervalRequestRef.current += 1
+    const requestId = intervalRequestRef.current
+    let cancelled = false
+
+    void Promise.resolve().then(() => {
+      if (cancelled || intervalRequestRef.current !== requestId) return
+      setCopyState('idle')
+      setIntervalEntry(null)
+      setIntervalLoadError('')
+
+      if (!displayEntry) {
+        setIntervalLoadState('idle')
+        return
+      }
+
+      if (totalIntervalCount === 0 || displayEntry.ticketIntervals.length > 0 || !onLoadEntryIntervals) {
+        setIntervalLoadState('ready')
+        if (displayEntry.ticketIntervals.length > 0) setIntervalEntry(displayEntry)
+        return
+      }
+
+      setIntervalLoadState('loading')
+      void onLoadEntryIntervals(displayEntry.userAddress, { offset: 0, limit: INTERVAL_PAGE_SIZE })
+        .then((nextEntry) => {
+          if (cancelled || intervalRequestRef.current !== requestId) return
+          setIntervalEntry(nextEntry)
+          setIntervalLoadState('ready')
+        })
+        .catch((error) => {
+          if (cancelled || intervalRequestRef.current !== requestId) return
+          setIntervalLoadError(error instanceof Error ? error.message : 'Could not load ticket ranges.')
+          setIntervalLoadState('failed')
+        })
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [displayEntry, onLoadEntryIntervals, totalIntervalCount])
 
   useEffect(() => {
     if (!hasSettledSearch || !submittedQuery || searchError) return
@@ -163,12 +362,12 @@ export function TicketHome({
     onTicketSearchResult?.({
       bonus_ticket_count: displayEntry?.bonusTickets,
       final_ticket_count: displayEntry?.finalTickets,
-      interval_count: displayEntry?.ticketIntervals.length,
+      interval_count: displayEntry ? totalIntervalCount : undefined,
       raw_ticket_count: displayEntry?.rawTickets,
       result: displayEntry ? 'found' : 'not_found',
       sbt_tier: displayEntry?.sbt,
     })
-  }, [displayEntry, hasSettledSearch, onTicketSearchResult, searchError, submittedQuery])
+  }, [displayEntry, hasSettledSearch, onTicketSearchResult, searchError, submittedQuery, totalIntervalCount])
 
   function clearScanTimer() {
     if (!scanTimerRef.current) return
@@ -229,9 +428,54 @@ export function TicketHome({
     })
   }
 
+  async function loadMoreIntervals() {
+    if (!displayEntry || !onLoadEntryIntervals || intervalLoadState === 'loading' || !hasMoreIntervals) return
+    const requestId = intervalRequestRef.current + 1
+    intervalRequestRef.current = requestId
+    setIntervalLoadError('')
+    setIntervalLoadState('loading')
+
+    try {
+      const nextEntry = await onLoadEntryIntervals(displayEntry.userAddress, {
+        offset: intervals.length,
+        limit: INTERVAL_PAGE_SIZE,
+      })
+      if (intervalRequestRef.current !== requestId || !nextEntry) return
+
+      const nextIntervals = nextEntry.ticketIntervals ?? []
+      setIntervalEntry((current) => ({
+        ...(nextEntry || displayEntry),
+        ticketIntervals: [...(current?.ticketIntervals ?? intervals), ...nextIntervals],
+        ticketIntervalCount: nextEntry.ticketIntervalCount ?? totalIntervalCount,
+        ticketIntervalsOffset: 0,
+        ticketIntervalsLimit: intervals.length + nextIntervals.length,
+        ticketIntervalsComplete: intervals.length + nextIntervals.length >= (nextEntry.ticketIntervalCount ?? totalIntervalCount),
+      }))
+      setIntervalLoadState('ready')
+    } catch (error) {
+      if (intervalRequestRef.current !== requestId) return
+      setIntervalLoadError(error instanceof Error ? error.message : 'Could not load ticket ranges.')
+      setIntervalLoadState('failed')
+    }
+  }
+
+  async function intervalsForCopy() {
+    if (!displayEntry) return []
+    if (!hasMoreIntervals || !onLoadEntryIntervals) return intervals
+
+    const fullEntry = await onLoadEntryIntervals(displayEntry.userAddress, { offset: 0, limit: 'all' })
+    return fullEntry?.ticketIntervals ?? intervals
+  }
+
   async function copyTickets() {
-    if (!displayEntry || intervals.length === 0) return
-    const text = intervals
+    if (!displayEntry || totalIntervalCount === 0 || copyState === 'loading') return
+    setCopyState('loading')
+
+    try {
+      const ticketIntervals = await intervalsForCopy()
+      if (ticketIntervals.length === 0) throw new Error('No ticket ranges to copy.')
+
+      const text = ticketIntervals
       .map((interval) => {
         const lines = [
           intervalLabel(interval),
@@ -246,17 +490,16 @@ export function TicketHome({
       })
       .join('\n')
 
-    try {
       await writeClipboardText(text)
       setCopyState('copied')
       onCopyTicketRanges?.({
-        interval_count: intervals.length,
+        interval_count: ticketIntervals.length,
         status: 'success',
       })
     } catch {
       setCopyState('failed')
       onCopyTicketRanges?.({
-        interval_count: intervals.length,
+        interval_count: totalIntervalCount,
         status: 'failed',
       })
     } finally {
@@ -429,6 +672,12 @@ export function TicketHome({
                 <p className="ticket-range-count">
                   {compactNumber(displayEntry.rawTickets)} R · {compactNumber(displayEntry.bonusTickets)} B ·{' '}
                   {compactNumber(displayEntry.finalTickets)} {copy.ticketHome.ticketsLabel}
+                  {totalIntervalCount > 0 && (
+                    <>
+                      {' · '}
+                      {compactNumber(intervals.length)} / {compactNumber(totalIntervalCount)} {copy.ticketHome.rangesLabel}
+                    </>
+                  )}
                 </p>
               )}
             </div>
@@ -436,11 +685,13 @@ export function TicketHome({
               className={`icon-button copy-ticket-button copy-ticket-button--${copyState}`}
               type="button"
               onClick={copyTickets}
-              disabled={intervals.length === 0}
+              disabled={totalIntervalCount === 0 || copyState === 'loading'}
             >
               <Copy size={18} />
               <span>
-                {copyState === 'copied'
+                {copyState === 'loading'
+                  ? copy.ticketHome.loadingTicketRanges
+                  : copyState === 'copied'
                   ? copy.ticketHome.copied
                   : copyState === 'failed'
                     ? copy.ticketHome.copyFailed
@@ -449,71 +700,100 @@ export function TicketHome({
             </button>
           </div>
 
-          {displayEntry && intervals.length > 0 ? (
-            <div className="interval-list ticket-home-list">
-              {rawIntervals.length > 0 && (
-                <div className="interval-group">
-                  <div className="interval-group-heading">
-                    <span>{copy.ticketHome.rawTicketNumbers}</span>
-                    <strong>{compactNumber(displayEntry.rawTickets)} R</strong>
-                  </div>
-                  {rawIntervals.map((interval, index) => (
-                    <article
-                      className="interval-row rolling-interval-row"
-                      key={`${interval.start}-${interval.end}-${index}`}
-                      style={{ animationDelay: `${Math.min(index, 18) * 28}ms` }}
-                    >
-                      <div>
-                        <strong>{intervalLabel(interval)}</strong>
-                        <span>
-                          {intervalEventText(interval, copy)}
-                          {interval.txHash && (
-                            <>
-                              {' · '}
-                              <a
-                                className="interval-tx-link"
-                                href={bscTxUrl(interval.txHash)}
-                                target="_blank"
-                                rel="noreferrer"
-                                title={interval.txHash}
-                              >
-                                {copy.ticketHome.transactionId} {interval.txHash.slice(0, 10)}...
-                                {interval.txHash.slice(-6)}
-                              </a>
-                            </>
-                          )}
-                        </span>
+          {displayEntry && totalIntervalCount > 0 ? (
+            <div className="ticket-range-lazy-stack">
+              {isLoadingInitialIntervals ? (
+                <div className="empty-state interval-loading-state">{copy.ticketHome.loadingTicketRanges}</div>
+              ) : intervals.length > 0 ? (
+                <div className="interval-list ticket-home-list">
+                  {rawIntervals.length > 0 && (
+                    <div className="interval-group">
+                      <div className="interval-group-heading">
+                        <span>{copy.ticketHome.rawTicketNumbers}</span>
+                        <strong>{compactNumber(displayEntry.rawTickets)} R</strong>
                       </div>
-                      <span>{interval.timestamp ? new Date(interval.timestamp * 1000).toLocaleString(language) : ''}</span>
-                    </article>
-                  ))}
+                      {rawIntervals.map((interval, index) => (
+                        <article
+                          className="interval-row rolling-interval-row"
+                          key={`${interval.start}-${interval.end}-${index}`}
+                          style={{ animationDelay: `${Math.min(index, 18) * 28}ms` }}
+                        >
+                          <div>
+                            <strong>{intervalLabel(interval)}</strong>
+                            <span>
+                              {intervalEventText(interval, copy)}
+                              {interval.txHash && (
+                                <>
+                                  {' · '}
+                                  <a
+                                    className="interval-tx-link"
+                                    href={bscTxUrl(interval.txHash)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    title={interval.txHash}
+                                  >
+                                    {copy.ticketHome.transactionId} {interval.txHash.slice(0, 10)}...
+                                    {interval.txHash.slice(-6)}
+                                  </a>
+                                </>
+                              )}
+                            </span>
+                          </div>
+                          <span>{interval.timestamp ? new Date(interval.timestamp * 1000).toLocaleString(language) : ''}</span>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+
+                  {bonusIntervals.length > 0 && (
+                    <div className="interval-group interval-group--bonus">
+                      <div className="interval-group-heading">
+                        <span>{copy.ticketHome.bonusTicketNumbers}</span>
+                        <strong>{compactNumber(displayEntry.bonusTickets)} B</strong>
+                      </div>
+                      <p className="bonus-provisional-note">{copy.ticketHome.bonusNumbersNotice}</p>
+                      {bonusIntervals.map((interval, index) => (
+                        <article
+                          className="interval-row rolling-interval-row interval-row--bonus"
+                          key={`${interval.start}-${interval.end}-${index}`}
+                          style={{ animationDelay: `${Math.min(index + rawIntervals.length, 18) * 28}ms` }}
+                        >
+                          <div>
+                            <strong>{intervalLabel(interval)}</strong>
+                            <span>
+                              {intervalEventText(interval, copy)} · {copy.ticketHome.globalDrawNumber}{' '}
+                              {formatTicketRange(interval.start, interval.end)}
+                            </span>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  )}
                 </div>
+              ) : (
+                <div className="empty-state">{intervalLoadError || copy.ticketHome.exactRangesEmpty}</div>
               )}
 
-              {bonusIntervals.length > 0 && (
-                <div className="interval-group interval-group--bonus">
-                  <div className="interval-group-heading">
-                    <span>{copy.ticketHome.bonusTicketNumbers}</span>
-                    <strong>{compactNumber(displayEntry.bonusTickets)} B</strong>
-                  </div>
-                  <p className="bonus-provisional-note">{copy.ticketHome.bonusNumbersNotice}</p>
-                  {bonusIntervals.map((interval, index) => (
-                    <article
-                      className="interval-row rolling-interval-row interval-row--bonus"
-                      key={`${interval.start}-${interval.end}-${index}`}
-                      style={{ animationDelay: `${Math.min(index + rawIntervals.length, 18) * 28}ms` }}
-                    >
-                      <div>
-                        <strong>{intervalLabel(interval)}</strong>
-                        <span>
-                          {intervalEventText(interval, copy)} · {copy.ticketHome.globalDrawNumber}{' '}
-                          {formatTicketRange(interval.start, interval.end)}
-                        </span>
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              )}
+              <div className="ticket-range-page-row">
+                <span>
+                  {compactNumber(intervals.length)} / {compactNumber(totalIntervalCount)} {copy.ticketHome.rangesLabel}
+                  {hasMoreIntervals && ` · ${copy.ticketHome.showingFirstRanges}`}
+                </span>
+                {intervalLoadError && <small>{intervalLoadError}</small>}
+                {hasMoreIntervals && (
+                  <button
+                    className="icon-button load-more-ranges-button"
+                    type="button"
+                    onClick={loadMoreIntervals}
+                    disabled={intervalLoadState === 'loading'}
+                  >
+                    <Ticket size={17} />
+                    <span>
+                      {intervalLoadState === 'loading' ? copy.ticketHome.loadingRanges : copy.ticketHome.loadMoreRanges}
+                    </span>
+                  </button>
+                )}
+              </div>
             </div>
           ) : (
             <div className="empty-state">{copy.ticketHome.exactRangesEmpty}</div>
@@ -597,6 +877,8 @@ export function TicketHome({
           </section>
         </aside>
       </section>
+
+      <TopTenLeaderboard ledger={ledger} walletIdentities={walletIdentities} copy={copy} />
     </>
   )
 }

@@ -8,7 +8,9 @@ type AnalyticsParams = Record<string, AnalyticsParamValue>
 export type AnalyticsEventName =
   | 'copy_ticket_ranges'
   | 'draw_next'
+  | 'draw_finalize'
   | 'draw_request'
+  | 'draw_reset'
   | 'draw_run_mode_change'
   | 'draw_status_read'
   | 'hidden_draw_unlock'

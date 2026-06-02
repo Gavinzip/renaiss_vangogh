@@ -6,7 +6,13 @@ import { spawn } from 'node:child_process'
 import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { createGzip } from 'node:zlib'
-import { buildLedgerSummary, findLedgerEntry, readLedgerPayload } from './raffle-ledger-api.mjs'
+import {
+  buildLedgerEntryResponse,
+  buildLedgerSummary,
+  findLedgerEntry,
+  parseEntryIntervalQuery,
+  readLedgerPayload,
+} from './raffle-ledger-api.mjs'
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const distDir = resolve(repoRoot, 'dist')
@@ -315,12 +321,13 @@ const server = createServer((request, response) => {
 
     try {
       const ledger = readLedgerPayload(ledgerPath)
+      const intervalOptions = parseEntryIntervalQuery(url.searchParams)
       sendJson(
         request,
         response,
         200,
         {
-          entry: findLedgerEntry(ledger, walletQuery),
+          entry: buildLedgerEntryResponse(findLedgerEntry(ledger, walletQuery), intervalOptions),
         },
         {
           'cache-control': 'no-store',

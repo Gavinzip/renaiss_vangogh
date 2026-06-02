@@ -153,11 +153,43 @@ if (!outsiderDrawNextBlocked) {
   throw new Error('outsider drawNext was not blocked')
 }
 
+let outsiderDrawBatchBlocked = false
+try {
+  await raffle.connect(outsider).drawBatch(2)
+} catch {
+  outsiderDrawBatchBlocked = true
+}
+if (!outsiderDrawBatchBlocked) {
+  throw new Error('outsider drawBatch was not blocked')
+}
+
+let zeroBatchBlocked = false
+try {
+  await raffle.drawBatch(0)
+} catch {
+  zeroBatchBlocked = true
+}
+if (!zeroBatchBlocked) {
+  throw new Error('zero-count drawBatch was not blocked')
+}
+
+let overBatchBlocked = false
+try {
+  await raffle.drawBatch(prizeSlotCount + 1n)
+} catch {
+  overBatchBlocked = true
+}
+if (!overBatchBlocked) {
+  throw new Error('oversized drawBatch was not blocked')
+}
+
 const revealedTickets = []
-for (let index = 0; index < Number(prizeSlotCount); index++) {
-  const drawNextTx = await raffle.drawNext()
-  const drawNextReceipt = await drawNextTx.wait()
-  const winnerEvent = drawNextReceipt.logs
+let expectedSlotIndex = 0
+const drawPlan = [1, 3, 4, 7, 6]
+for (const count of drawPlan) {
+  const drawTx = count === 1 ? await raffle.drawNext() : await raffle.drawBatch(count)
+  const drawReceipt = await drawTx.wait()
+  const winnerEvents = drawReceipt.logs
     .map((log) => {
       try {
         return raffle.interface.parseLog(log)
@@ -165,12 +197,18 @@ for (let index = 0; index < Number(prizeSlotCount); index++) {
         return null
       }
     })
-    .find((event) => event?.name === 'WinnerDrawn')
-  if (!winnerEvent) throw new Error(`WinnerDrawn event missing at slot ${index}`)
-  if (winnerEvent.args.slotIndex !== BigInt(index)) {
-    throw new Error(`expected slot ${index}, got ${winnerEvent.args.slotIndex}`)
+    .filter((event) => event?.name === 'WinnerDrawn')
+  if (winnerEvents.length !== count) {
+    throw new Error(`expected ${count} WinnerDrawn events, got ${winnerEvents.length}`)
   }
-  revealedTickets.push(winnerEvent.args.ticketNumber)
+
+  for (const winnerEvent of winnerEvents) {
+    if (winnerEvent.args.slotIndex !== BigInt(expectedSlotIndex)) {
+      throw new Error(`expected slot ${expectedSlotIndex}, got ${winnerEvent.args.slotIndex}`)
+    }
+    revealedTickets.push(winnerEvent.args.ticketNumber)
+    expectedSlotIndex += 1
+  }
 }
 
 const status = await raffle.roundStatus()
@@ -206,6 +244,10 @@ console.log(
       firstFiveWinnerTickets: winnerTickets.slice(0, 5).map((ticket) => ticket.toString()),
       outsiderBlocked,
       outsiderDrawNextBlocked,
+      outsiderDrawBatchBlocked,
+      zeroBatchBlocked,
+      overBatchBlocked,
+      drawPlan,
     },
     null,
     2,

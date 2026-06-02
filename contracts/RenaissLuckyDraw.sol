@@ -163,17 +163,23 @@ contract RenaissLuckyDraw is VRFConsumerBaseV2Plus {
     function drawNext() external onlyDrawOperator returns (uint256 ticketNumber) {
         if (state != DrawState.RandomnessReady) revert InvalidState();
 
-        uint256 slotIndex = s_winnerTickets.length;
-        if (slotIndex >= prizeSlotCount) revert InvalidState();
+        ticketNumber = _drawNextTicket();
+        _completeIfFulfilled();
+    }
 
-        ticketNumber = _drawUniqueTicket(randomWord, slotIndex);
-        s_winnerTickets.push(ticketNumber);
-        emit WinnerDrawn(slotIndex, ticketNumber);
+    function drawBatch(uint256 count) external onlyDrawOperator returns (uint256[] memory ticketNumbers) {
+        if (state != DrawState.RandomnessReady) revert InvalidState();
+        if (count == 0) revert InvalidPrizeSlots();
 
-        if (s_winnerTickets.length == prizeSlotCount) {
-            state = DrawState.Fulfilled;
-            emit DrawFulfilled(requestId, randomWord, s_winnerTickets);
+        uint256 remainingSlots = prizeSlotCount - s_winnerTickets.length;
+        if (count > remainingSlots) revert InvalidPrizeSlots();
+
+        ticketNumbers = new uint256[](count);
+        for (uint256 index = 0; index < count; index++) {
+            ticketNumbers[index] = _drawNextTicket();
         }
+
+        _completeIfFulfilled();
     }
 
     function winnerTickets() external view returns (uint256[] memory) {
@@ -208,6 +214,22 @@ contract RenaissLuckyDraw is VRFConsumerBaseV2Plus {
             prizeSlotCount,
             s_winnerTickets.length
         );
+    }
+
+    function _drawNextTicket() internal returns (uint256 ticketNumber) {
+        uint256 slotIndex = s_winnerTickets.length;
+        if (slotIndex >= prizeSlotCount) revert InvalidState();
+
+        ticketNumber = _drawUniqueTicket(randomWord, slotIndex);
+        s_winnerTickets.push(ticketNumber);
+        emit WinnerDrawn(slotIndex, ticketNumber);
+    }
+
+    function _completeIfFulfilled() internal {
+        if (s_winnerTickets.length == prizeSlotCount) {
+            state = DrawState.Fulfilled;
+            emit DrawFulfilled(requestId, randomWord, s_winnerTickets);
+        }
     }
 
     function _setVrfConfig(
