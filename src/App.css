@@ -1471,7 +1471,7 @@ body {
   color: var(--text);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.83), rgba(247, 251, 255, 0.88)),
-    url("./assets/van-gogh-starry-hero-bg.jpg") center top / cover fixed no-repeat,
+    url("./assets/van-gogh-starry-hero-bg.webp") center top / cover fixed no-repeat,
     radial-gradient(980px 620px at -10% -16%, rgba(255, 208, 132, 0.4), rgba(255, 208, 132, 0) 64%),
     radial-gradient(920px 580px at 105% -10%, rgba(111, 198, 255, 0.38), rgba(111, 198, 255, 0) 66%),
     radial-gradient(900px 560px at 50% 110%, rgba(66, 220, 172, 0.26), rgba(66, 220, 172, 0) 74%),
@@ -2588,7 +2588,7 @@ body::after {
   overflow: visible;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(247, 251, 255, 0.9)),
-    url("./assets/van-gogh-starry-hero-bg.jpg") center top / cover fixed no-repeat,
+    url("./assets/van-gogh-starry-hero-bg.webp") center top / cover fixed no-repeat,
     radial-gradient(62% 76% at 73% 48%, rgba(135, 205, 255, 0.2), rgba(135, 205, 255, 0) 62%),
     radial-gradient(48% 62% at 18% 18%, rgba(255, 219, 141, 0.18), rgba(255, 219, 141, 0) 64%),
     linear-gradient(180deg, #ffffff 0%, #f6fbff 58%, #ffffff 100%);
@@ -2604,7 +2604,7 @@ body::after {
   border-radius: 0;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.56), rgba(248, 252, 255, 0.38)),
-    url("./assets/van-gogh-starry-hero-bg.jpg") center / cover no-repeat,
+    url("./assets/van-gogh-starry-hero-bg.webp") center / cover no-repeat,
     linear-gradient(112deg, rgba(255, 255, 255, 0) 0 44%, rgba(184, 212, 242, 0.28) 44.2% 44.5%, rgba(255, 255, 255, 0) 44.8%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(248, 252, 255, 0.64));
   color: #111;
@@ -3112,7 +3112,7 @@ body::after {
   border-top: 1px solid rgba(20, 48, 82, 0.08);
   background:
     linear-gradient(180deg, rgba(249, 252, 255, 0.84), rgba(255, 255, 255, 0.94)),
-    url("./assets/van-gogh-starry-hero-bg.jpg") center / cover fixed no-repeat;
+    url("./assets/van-gogh-starry-hero-bg.webp") center / cover fixed no-repeat;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
 }
 
@@ -3184,7 +3184,7 @@ body::after {
   color: #f8fbff;
   background:
     linear-gradient(135deg, rgba(4, 15, 34, 0.68), rgba(9, 41, 78, 0.52)),
-    url("./assets/van-gogh-starry-hero-bg.jpg") center / cover no-repeat;
+    url("./assets/van-gogh-starry-hero-bg.webp") center / cover no-repeat;
 }
 
 .rules-process-card::after {
@@ -3434,7 +3434,7 @@ body::after {
   background:
     linear-gradient(90deg, rgba(255, 255, 255, 0.97) 0%, rgba(255, 255, 255, 0.86) 37%, rgba(255, 255, 255, 0.22) 68%, rgba(255, 255, 255, 0.06) 100%),
     radial-gradient(circle at 22% 46%, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0) 34%),
-    url("./assets/van-gogh-starry-hero-bg.jpg") center / cover no-repeat;
+    url("./assets/van-gogh-starry-hero-bg.webp") center / cover no-repeat;
   border-bottom: 1px solid rgba(12, 74, 150, 0.08);
 }
 
@@ -3665,7 +3665,7 @@ body::after {
     padding-top: 8.8rem;
     background:
       linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(255, 255, 255, 0.78) 47%, rgba(255, 255, 255, 0.4) 100%),
-      url("./assets/van-gogh-starry-hero-bg.jpg") center / cover no-repeat;
+      url("./assets/van-gogh-starry-hero-bg.webp") center / cover no-repeat;
   }
 
   .holo-prize-stage {

@@ -2,7 +2,7 @@
   background:
     linear-gradient(90deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.84) 39%, rgba(255, 255, 255, 0.22) 72%),
     radial-gradient(38rem 28rem at 24% 38%, rgba(255, 255, 255, 0.94), transparent 72%),
-    url("../assets/van-gogh-starry-hero-bg.jpg") center top / cover no-repeat;
+    url("../assets/van-gogh-starry-hero-bg.webp") center top / cover no-repeat;
 }
 
 .page-tickets .ticket-home-hero.panel.hero {

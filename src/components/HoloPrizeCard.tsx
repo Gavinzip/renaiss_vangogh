@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 import type { CSSProperties, PointerEvent } from 'react'
-import cardBack from '../assets/psa-pikachu-van-gogh-back-cut.webp'
-import cardFront from '../assets/psa-pikachu-van-gogh-front-cut.webp'
+import cardBack from '../assets/psa-pikachu-van-gogh-back-cut-fast.webp'
+import cardFront from '../assets/psa-pikachu-van-gogh-front-cut-fast.webp'
 
 const RESET_VARS = {
   '--mx': '50%',
@@ -67,7 +67,16 @@ export function HoloPrizeCard() {
       >
         <span className="holo-prize-card__rotator">
           <span className="holo-prize-card__face holo-prize-card__front">
-            <img src={cardFront} alt="Van Gogh Pikachu PSA 10 front" draggable={false} />
+            <img
+              src={cardFront}
+              alt="Van Gogh Pikachu PSA 10 front"
+              draggable={false}
+              decoding="async"
+              fetchPriority="high"
+              height={630}
+              loading="eager"
+              width={360}
+            />
             <span
               className="holo-prize-card__glare"
               aria-hidden="true"
@@ -75,7 +84,7 @@ export function HoloPrizeCard() {
             />
           </span>
           <span className="holo-prize-card__face holo-prize-card__back">
-            <img src={cardBack} alt="Van Gogh Pikachu PSA 10 back" draggable={false} />
+            <img src={cardBack} alt="Van Gogh Pikachu PSA 10 back" draggable={false} decoding="async" height={632} loading="eager" width={360} />
             <span
               className="holo-prize-card__glare"
               aria-hidden="true"

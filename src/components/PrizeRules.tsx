@@ -1,9 +1,9 @@
 import { useState, type MouseEvent } from 'react'
 import { ChevronDown, Gift, Medal, Sparkles } from 'lucide-react'
-import sbtBrownImage from '../assets/sbt-brown.png'
-import sbtGoldImage from '../assets/sbt-gold.png'
-import sbtRainbowImage from '../assets/sbt-rainbow.png'
-import sbtSilverImage from '../assets/sbt-silver.png'
+import sbtBrownImage from '../assets/sbt-brown.webp'
+import sbtGoldImage from '../assets/sbt-gold.webp'
+import sbtRainbowImage from '../assets/sbt-rainbow.webp'
+import sbtSilverImage from '../assets/sbt-silver.webp'
 import type { AppCopy } from '../lib/i18n'
 import { CASH_PRIZE_POOL, CASH_PRIZES, GRAND_PRIZE, TOTAL_PRIZE_SLOTS } from '../lib/prizes/prizes'
 import { compactNumber } from '../lib/ticketing/display'
@@ -197,7 +197,7 @@ export function PrizeRules({ copy }: { copy: AppCopy }) {
             <div className="rules-detail-tier-list">
               {[...SBT_TIERS].map((tier) => (
                 <div className={`rules-tier-chip tier-${tier.tier}`} key={tier.tier}>
-                  {SBT_TIER_IMAGES[tier.tier] && <img src={SBT_TIER_IMAGES[tier.tier]} alt="" />}
+                  {SBT_TIER_IMAGES[tier.tier] && <img src={SBT_TIER_IMAGES[tier.tier]} alt="" decoding="async" loading="lazy" />}
                   <strong>{copy.sbt.tiers[tier.tier]}</strong>
                   <span>
                     {tier.threshold}

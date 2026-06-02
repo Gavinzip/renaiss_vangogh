@@ -19,7 +19,7 @@
   border-radius: 28px;
   background:
     linear-gradient(105deg, rgba(255, 255, 255, 0.96) 0 48%, rgba(255, 255, 255, 0.55) 74%, rgba(255, 255, 255, 0.22) 100%),
-    url("../assets/van-gogh-live-source.jpeg") right center / cover no-repeat;
+    url("../assets/van-gogh-live-source.webp") right center / cover no-repeat;
   box-shadow: var(--raffle-shadow);
 }
 
@@ -1592,7 +1592,7 @@
     grid-template-columns: 1fr;
     background:
       linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.76)),
-      url("../assets/van-gogh-live-source.jpeg") center / cover no-repeat;
+      url("../assets/van-gogh-live-source.webp") center / cover no-repeat;
   }
 
   .page-draw .page-hero-icon {

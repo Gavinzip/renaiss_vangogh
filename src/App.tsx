@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, FileCode2, Loader2, ShieldCheck, Ticket, Trophy } from 'lucide-react'
 import './App.css'
 import './styles/raffle-foundation.css'
@@ -7,14 +7,9 @@ import './styles/raffle-rules.css'
 import './styles/raffle-draw.css'
 import './styles/raffle-simulator.css'
 import './styles/raffle-polish.css'
-import renaissLogo from './assets/renaiss-logo-alpha-cropped.png'
-import liveDrawImage from './assets/van-gogh-live-source.jpeg'
-import { ContractDetails } from './components/ContractDetails'
-import { DrawReveal } from './components/DrawReveal'
-import { PrizeRules } from './components/PrizeRules'
-import { SimpleDrawSimulator } from './components/SimpleDrawSimulator'
+import renaissLogo from './assets/renaiss-logo-alpha-cropped.webp'
+import liveDrawImage from './assets/van-gogh-live-source.webp'
 import { TicketHome } from './components/TicketHome'
-import { WalletPanel } from './components/WalletPanel'
 import { initializeAnalytics, trackEvent, trackPageView } from './lib/analytics'
 import { COPY, LANGUAGES, type LanguageCode } from './lib/i18n'
 import { loadFullRaffleLedger, loadRaffleEntry, loadRaffleLedger } from './lib/ticketing/openMonitor'
@@ -37,6 +32,12 @@ import {
 } from './lib/wallet/bsc'
 
 type PageKey = 'tickets' | 'rules' | 'simulator' | 'draw'
+
+const ContractDetails = lazy(() => import('./components/ContractDetails').then((module) => ({ default: module.ContractDetails })))
+const DrawReveal = lazy(() => import('./components/DrawReveal').then((module) => ({ default: module.DrawReveal })))
+const PrizeRules = lazy(() => import('./components/PrizeRules').then((module) => ({ default: module.PrizeRules })))
+const SimpleDrawSimulator = lazy(() => import('./components/SimpleDrawSimulator').then((module) => ({ default: module.SimpleDrawSimulator })))
+const WalletPanel = lazy(() => import('./components/WalletPanel').then((module) => ({ default: module.WalletPanel })))
 
 const LEDGER_REFRESH_INTERVAL_MS = 15 * 60 * 1000
 const FULL_LEDGER_PRELOAD_DELAY_MS = 1200
@@ -66,6 +67,15 @@ function PageHeader({
       <div className="page-hero-icon">
         <Icon size={30} />
       </div>
+    </section>
+  )
+}
+
+function PageChunkLoader() {
+  return (
+    <section className="app-shell centered">
+      <Loader2 className="spin" size={34} />
+      <p>Loading raffle view...</p>
     </section>
   )
 }
@@ -533,6 +543,7 @@ export default function App() {
         </section>
       )}
 
+      <Suspense fallback={<PageChunkLoader />}>
       {activePage === 'tickets' && (
         <TicketHome
           entry={selectedEntry}
@@ -644,7 +655,7 @@ export default function App() {
             <ContractDetails ledger={currentFullLedger} network={activeDrawNetwork} copy={copy} />
             <section className="draw-support-panel">
               <article className="draw-support-card draw-support-card--media">
-                <img src={liveDrawImage} alt="Van Gogh live draw machine artwork" />
+                <img src={liveDrawImage} alt="Van Gogh live draw machine artwork" decoding="async" loading="lazy" />
                 <div>
                   <span>{copy.draw.liveReady}</span>
                   <strong>{copy.draw.liveTitle}</strong>
@@ -667,6 +678,7 @@ export default function App() {
           </section>
         </>
       )}
+      </Suspense>
     </main>
   )
 }

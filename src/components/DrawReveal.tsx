@@ -1,7 +1,7 @@
 import { Crown, FastForward, Loader2, Play, RotateCcw, Sparkles } from 'lucide-react'
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { gsap } from 'gsap'
-import goldTicketImage from '../assets/gold-ticket-transparent.png'
+import goldTicketImage from '../assets/gold-ticket-transparent.webp'
 import {
   PRIZE_GROUPS,
   TOTAL_PRIZE_DRAW_SLOTS,
@@ -834,7 +834,7 @@ export function DrawReveal({
 
         <div className="draw-reveal-result" aria-live="polite">
           <div className="draw-reveal-ticket">
-            <img src={goldTicketImage} alt={copy.drawReveal.ticketAlt} />
+            <img src={goldTicketImage} alt={copy.drawReveal.ticketAlt} decoding="async" />
             <div className="draw-reveal-shine" aria-hidden="true" />
             <div className="draw-reveal-number-wrap">
               <div className="draw-reveal-number-burst" aria-hidden="true" />

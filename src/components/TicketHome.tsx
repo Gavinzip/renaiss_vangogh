@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Copy, Gem, Search, ShieldCheck, Sparkles, Ticket, Trophy } from 'lucide-react'
-import sbtBrownImage from '../assets/sbt-brown.png'
-import sbtGoldImage from '../assets/sbt-gold.png'
-import sbtRainbowImage from '../assets/sbt-rainbow.png'
-import sbtSilverImage from '../assets/sbt-silver.png'
-import sbtLevelsImage from '../assets/van-gogh-sbt-levels-source.jpeg'
+import sbtBrownImage from '../assets/sbt-brown.webp'
+import sbtGoldImage from '../assets/sbt-gold.webp'
+import sbtRainbowImage from '../assets/sbt-rainbow.webp'
+import sbtSilverImage from '../assets/sbt-silver.webp'
+import sbtLevelsImage from '../assets/van-gogh-sbt-levels-source.webp'
 import type { AppCopy, LanguageCode } from '../lib/i18n'
 import { packLabel } from '../lib/i18n'
 import { anyPrizeProbability, compactNumber, intervalLabel, percent, probability } from '../lib/ticketing/display'
@@ -335,6 +335,8 @@ export function TicketHome({
                     src={activeSbtImage}
                     alt=""
                     aria-hidden="true"
+                    decoding="async"
+                    loading="lazy"
                   />
                 )}
                 <span>{copy.ticketHome.sbtTier}</span>
@@ -524,6 +526,8 @@ export function TicketHome({
               <img
                 src={activeSbtImage || sbtLevelsImage}
                 alt={activeSbtImage ? `${activeSbtLabel} SBT` : 'Renaiss SBT level artwork'}
+                decoding="async"
+                loading="lazy"
               />
             </div>
             <div>

@@ -1,6 +1,6 @@
-import prize100Image from '../assets/prize-100u.webp'
-import prize200Image from '../assets/prize-200u.webp'
-import prizePikachuImage from '../assets/prize-pikachu.webp'
+import prize100Image from '../assets/prize-100u-fast.webp'
+import prize200Image from '../assets/prize-200u-fast.webp'
+import prizePikachuImage from '../assets/prize-pikachu-fast.webp'
 
 export type PrizeGalleryItem = {
   id: string
