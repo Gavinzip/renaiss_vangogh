@@ -2,7 +2,9 @@ FROM node:24-alpine AS build
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --include=dev
+COPY scripts/prepare-docker-web-package.mjs ./scripts/prepare-docker-web-package.mjs
+RUN node scripts/prepare-docker-web-package.mjs
+RUN npm install --include=dev --no-audit --no-fund --package-lock=false
 
 COPY . .
 RUN npm run build
