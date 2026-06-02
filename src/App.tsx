@@ -39,6 +39,7 @@ import {
 type PageKey = 'tickets' | 'rules' | 'simulator' | 'draw'
 
 const LEDGER_REFRESH_INTERVAL_MS = 15 * 60 * 1000
+const FULL_LEDGER_PRELOAD_DELAY_MS = 1200
 const SECRET_DRAW_UNLOCK_CLICKS = 3
 
 const PUBLIC_NAV_ITEMS: PageKey[] = ['tickets', 'rules', 'simulator']
@@ -69,6 +70,11 @@ function PageHeader({
   )
 }
 
+function ledgerCacheKey(value: RaffleLedger | null) {
+  if (!value) return ''
+  return value.ledgerHash || (value.generatedAt ? String(value.generatedAt) : '')
+}
+
 export default function App() {
   const [ledger, setLedger] = useState<RaffleLedger | null>(null)
   const [fullLedger, setFullLedger] = useState<RaffleLedger | null>(null)
@@ -92,10 +98,15 @@ export default function App() {
   const [drawUnlocked, setDrawUnlocked] = useState(false)
   const drawUnlockHitsRef = useRef(0)
   const entryRequestRef = useRef(0)
+  const fullLedgerPreloadKeyRef = useRef('')
   const copy = COPY[language]
   const activePage: PageKey = page === 'draw' && !drawUnlocked ? 'simulator' : page
   const needsFullLedger = activePage === 'simulator' || activePage === 'draw'
-  const displayLedger = needsFullLedger ? fullLedger ?? ledger : ledger
+  const summaryLedgerKey = ledgerCacheKey(ledger)
+  const fullLedgerKey = ledgerCacheKey(fullLedger)
+  const fullLedgerIsCurrent = Boolean(fullLedger && (!summaryLedgerKey || !fullLedgerKey || summaryLedgerKey === fullLedgerKey))
+  const currentFullLedger = fullLedgerIsCurrent ? fullLedger : null
+  const displayLedger = needsFullLedger ? currentFullLedger ?? ledger : ledger
   const activeDrawNetworkKey: DrawNetworkKey = isDrawNetworkKey(drawRunMode) ? drawRunMode : 'mainnet'
   const activeDrawNetwork = DRAW_NETWORKS[activeDrawNetworkKey]
   const activeStoredDrawStatus = drawStatusByNetwork[activeDrawNetworkKey] ?? null
@@ -146,13 +157,13 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (!needsFullLedger || fullLedger) return undefined
+    if (!needsFullLedger || fullLedgerIsCurrent) return undefined
     let alive = true
 
     async function refreshFullLedger() {
       setFullLedgerError('')
       try {
-        const value = await loadFullRaffleLedger()
+        const value = await loadFullRaffleLedger({ force: Boolean(fullLedger && !fullLedgerIsCurrent) })
         if (alive) setFullLedger(value)
       } catch (error) {
         if (alive) setFullLedgerError(error instanceof Error ? error.message : 'Could not load full raffle ledger.')
@@ -164,7 +175,32 @@ export default function App() {
     return () => {
       alive = false
     }
-  }, [fullLedger, needsFullLedger])
+  }, [fullLedger, fullLedgerIsCurrent, needsFullLedger])
+
+  useEffect(() => {
+    if (!ledger || fullLedgerIsCurrent) return undefined
+
+    const preloadKey = summaryLedgerKey || 'current'
+    if (fullLedgerPreloadKeyRef.current === preloadKey) return undefined
+    fullLedgerPreloadKeyRef.current = preloadKey
+
+    let alive = true
+    const timeoutId = window.setTimeout(() => {
+      setFullLedgerError('')
+      void loadFullRaffleLedger({ force: Boolean(fullLedger && !fullLedgerIsCurrent) })
+        .then((value) => {
+          if (alive) setFullLedger(value)
+        })
+        .catch((error) => {
+          if (alive) setFullLedgerError(error instanceof Error ? error.message : 'Could not load full raffle ledger.')
+        })
+    }, FULL_LEDGER_PRELOAD_DELAY_MS)
+
+    return () => {
+      alive = false
+      window.clearTimeout(timeoutId)
+    }
+  }, [fullLedger, fullLedgerIsCurrent, ledger, summaryLedgerKey])
 
   useEffect(() => {
     let alive = true
@@ -534,8 +570,8 @@ export default function App() {
                 <span>{fullLedgerError}</span>
               </div>
             </section>
-          ) : fullLedger ? (
-            <SimpleDrawSimulator ledger={fullLedger} walletIdentities={walletIdentities} copy={copy} />
+          ) : currentFullLedger ? (
+            <SimpleDrawSimulator ledger={currentFullLedger} walletIdentities={walletIdentities} copy={copy} />
           ) : (
             <main className="app-shell centered">
               <Loader2 className="spin" size={34} />
@@ -555,14 +591,14 @@ export default function App() {
         </section>
       )}
 
-      {activePage === 'draw' && !fullLedgerError && !fullLedger && (
+      {activePage === 'draw' && !fullLedgerError && !currentFullLedger && (
         <main className="app-shell centered">
           <Loader2 className="spin" size={34} />
           <p>Loading full raffle ledger...</p>
         </main>
       )}
 
-      {activePage === 'draw' && fullLedger && (
+      {activePage === 'draw' && currentFullLedger && (
         <>
           <PageHeader
             eyebrow={copy.draw.eyebrow}
@@ -575,8 +611,8 @@ export default function App() {
               runMode={drawRunMode}
               onRunModeChange={handleDrawRunModeChange}
               winnerTickets={activeWinnerTickets}
-              totalTickets={fullLedger.totalFinalTickets}
-              ledger={fullLedger}
+              totalTickets={currentFullLedger.totalFinalTickets}
+              ledger={currentFullLedger}
               walletIdentities={walletIdentities}
               copy={copy}
               drawStatus={activeDrawStatus}
@@ -593,7 +629,7 @@ export default function App() {
               status={activeDrawStatus}
               message={drawMessage}
               busy={drawBusy}
-              ledgerTotalTickets={fullLedger.totalFinalTickets}
+              ledgerTotalTickets={currentFullLedger.totalFinalTickets}
               transactionHashes={activeDrawTxHashes}
               authorizedOperatorAddress={activeDrawNetwork.authorizedOperatorAddress}
               isAuthorizedOperator={isActiveAuthorizedOperator}
@@ -605,7 +641,7 @@ export default function App() {
               }}
               copy={copy}
             />
-            <ContractDetails ledger={fullLedger} network={activeDrawNetwork} copy={copy} />
+            <ContractDetails ledger={currentFullLedger} network={activeDrawNetwork} copy={copy} />
             <section className="draw-support-panel">
               <article className="draw-support-card draw-support-card--media">
                 <img src={liveDrawImage} alt="Van Gogh live draw machine artwork" />

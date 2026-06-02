@@ -6,6 +6,9 @@ const RAFFLE_ENTRY_URL = '/api/raffle-entry'
 const RAFFLE_SUMMARY_URL = '/api/raffle-summary'
 const OPEN_MONITOR_LUCKY_DRAW_URL = '/open-monitor-api/lucky-draw/leaderboard'
 
+let fullLedgerCache: RaffleLedger | null = null
+let fullLedgerRequest: Promise<RaffleLedger> | null = null
+
 async function readJson(url: string): Promise<unknown> {
   const response = await fetch(url, { cache: 'no-store' })
   if (!response.ok) {
@@ -23,12 +26,24 @@ export async function loadRaffleLedger(): Promise<RaffleLedger> {
   return summary
 }
 
-export async function loadFullRaffleLedger(): Promise<RaffleLedger> {
-  const ledger = normalizeLoadedLedger(await readJson(FULL_LEDGER_URL))
-  if (!ledger) {
-    throw new Error('public/lucky-draw-ledger.json is missing or invalid. Generate the buyback ledger before opening the draw console.')
-  }
-  return ledger
+export async function loadFullRaffleLedger({ force = false }: { force?: boolean } = {}): Promise<RaffleLedger> {
+  if (!force && fullLedgerCache) return fullLedgerCache
+  if (!force && fullLedgerRequest) return fullLedgerRequest
+
+  fullLedgerRequest = readJson(FULL_LEDGER_URL)
+    .then((payload) => {
+      const ledger = normalizeLoadedLedger(payload)
+      if (!ledger) {
+        throw new Error('public/lucky-draw-ledger.json is missing or invalid. Generate the buyback ledger before opening the draw console.')
+      }
+      fullLedgerCache = ledger
+      return ledger
+    })
+    .finally(() => {
+      fullLedgerRequest = null
+    })
+
+  return fullLedgerRequest
 }
 
 export async function loadRaffleEntry(query: string): Promise<RaffleEntry | null> {
