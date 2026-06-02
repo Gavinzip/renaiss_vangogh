@@ -74,6 +74,10 @@ export interface RaffleLedger {
   candidateSourceLimited: boolean
   ledgerHash: string | null
   drawContractAddress: string | null
+  bonusShuffleVersion?: string | null
+  bonusShuffleSeed?: string | null
+  bonusShuffleLocked?: boolean
+  bonusShuffleLockedAt?: number | null
   entries: RaffleEntry[]
   notes: string[]
 }

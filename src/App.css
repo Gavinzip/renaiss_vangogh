@@ -3841,6 +3841,8 @@ body::after {
   counter-increment: ticket-range;
   display: grid;
   grid-template-columns: 68px minmax(0, 1fr) max-content;
+  content-visibility: auto;
+  contain-intrinsic-size: 72px;
   min-height: 72px;
   align-items: center;
   gap: 14px;

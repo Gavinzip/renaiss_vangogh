@@ -224,6 +224,10 @@ export function normalizeLoadedLedger(value: unknown): RaffleLedger | null {
     candidateSourceLimited: Boolean(maybe.candidateSourceLimited),
     ledgerHash: maybe.ledgerHash || null,
     drawContractAddress: maybe.drawContractAddress || null,
+    bonusShuffleVersion: maybe.bonusShuffleVersion || null,
+    bonusShuffleSeed: maybe.bonusShuffleSeed || null,
+    bonusShuffleLocked: Boolean(maybe.bonusShuffleLocked),
+    bonusShuffleLockedAt: toInteger(maybe.bonusShuffleLockedAt),
     entries,
     notes: maybe.notes || [],
   }

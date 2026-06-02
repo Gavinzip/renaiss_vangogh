@@ -44,7 +44,10 @@ function contentType(path) {
 
 function sendFile(response, path, headers = {}) {
   if (!existsSync(path) || !statSync(path).isFile()) {
-    response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+    response.writeHead(404, {
+      'content-type': 'text/plain; charset=utf-8',
+      ...headers,
+    })
     response.end('Not found')
     return
   }
@@ -126,7 +129,10 @@ function runLedgerRefresh(trigger) {
 const server = createServer((request, response) => {
   const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`)
   if (url.pathname === '/health') {
-    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+    response.writeHead(200, {
+      'content-type': 'application/json; charset=utf-8',
+      'access-control-allow-origin': '*',
+    })
     response.end(
       JSON.stringify({
         ok: true,
@@ -145,6 +151,7 @@ const server = createServer((request, response) => {
   if (url.pathname === '/lucky-draw-ledger.json') {
     sendFile(response, ledgerPath, {
       'cache-control': 'no-store',
+      'access-control-allow-origin': '*',
     })
     return
   }

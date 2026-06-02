@@ -1,7 +1,7 @@
 import { buildLedgerFromOpenMonitor, normalizeLoadedLedger } from './ledger'
 import type { OpenMonitorLuckyDrawResponse, RaffleLedger } from './types'
 
-const LOCAL_LEDGER_URL = '/lucky-draw-ledger.json'
+const LOCAL_LEDGER_URL = import.meta.env.VITE_LEDGER_URL || '/lucky-draw-ledger.json'
 const OPEN_MONITOR_LUCKY_DRAW_URL = '/open-monitor-api/lucky-draw/leaderboard'
 
 async function readJson(url: string): Promise<unknown> {

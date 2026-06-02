@@ -18,6 +18,16 @@ import {
 } from './lucky-draw/utils.mjs'
 import { getSbtTier } from './lucky-draw/rules.mjs'
 
+const BONUS_SHUFFLE_VERSION = 'sbt-bonus-shuffle-v1'
+
+function sha256Hex(value) {
+  return createHash('sha256').update(value).digest('hex')
+}
+
+function sha256Bytes32(value) {
+  return `0x${sha256Hex(value)}`
+}
+
 function parseAddressCsv(value) {
   return String(value || '')
     .split(',')
@@ -207,7 +217,7 @@ function aggregateBaseTickets(events, canonicalSources) {
   return entriesByAddress
 }
 
-function allocateIntervals(entriesByAddress, events) {
+function allocateRawIntervals(entriesByAddress, events) {
   let cursor = 0
   for (const event of events) {
     const entry = entriesByAddress.get(event.canonicalAddress)
@@ -230,37 +240,152 @@ function allocateIntervals(entriesByAddress, events) {
     })
   }
 
-  const bonusEntries = [...entriesByAddress.values()].sort((left, right) => {
-    const leftTs = left.firstBuybackAt || Number.MAX_SAFE_INTEGER
-    const rightTs = right.firstBuybackAt || Number.MAX_SAFE_INTEGER
-    if (leftTs !== rightTs) return leftTs - rightTs
-    return left.userAddress.localeCompare(right.userAddress)
-  })
+  return cursor
+}
 
-  let bonusCursor = 0
-  const rawTicketTotal = cursor
-  for (const entry of bonusEntries) {
-    if (entry.bonusTickets <= 0) continue
-    const displayStart = bonusCursor + 1
-    const displayEnd = bonusCursor + entry.bonusTickets
-    const start = rawTicketTotal + displayStart
-    const end = rawTicketTotal + displayEnd
-    bonusCursor = displayEnd
-    cursor = end
-    entry.ticketIntervals.push({
-      start,
-      end,
-      displayStart,
-      displayEnd,
-      namespace: 'bonus',
-      source: 'sbt-bonus',
-    })
+function rawIntervalSeedPayload(entry) {
+  return entry.ticketIntervals
+    .filter((interval) => interval.namespace === 'raw')
+    .map((interval) => ({
+      start: interval.start,
+      end: interval.end,
+      source: interval.source,
+      pack: interval.pack,
+      txHash: interval.txHash,
+      timestamp: interval.timestamp,
+      blockNumber: interval.blockNumber,
+      ordinal: interval.ordinal,
+    }))
+}
+
+function deriveBonusShuffleSeed(entriesByAddress, rawTicketTotal) {
+  const payload = {
+    version: BONUS_SHUFFLE_VERSION,
+    campaignStart: CAMPAIGN_START,
+    campaignEnd: CAMPAIGN_END,
+    totalRawTickets: rawTicketTotal,
+    entries: [...entriesByAddress.values()]
+      .filter((entry) => entry.finalTickets > 0)
+      .sort((left, right) => left.userAddress.localeCompare(right.userAddress))
+      .map((entry) => ({
+        userAddress: entry.userAddress,
+        sourceAddresses: [...entry.sourceAddresses].sort(),
+        rawTickets: entry.rawTickets,
+        bonusTickets: entry.bonusTickets,
+        finalTickets: entry.finalTickets,
+        sbt: entry.sbt,
+        sbtMultiplier: entry.sbtMultiplier,
+        rawIntervals: rawIntervalSeedPayload(entry),
+      })),
   }
 
+  return sha256Bytes32(stableStringify(payload))
+}
+
+function pushBonusInterval(entry, rawTicketTotal, displayStart, displayEnd) {
+  entry.ticketIntervals.push({
+    start: rawTicketTotal + displayStart,
+    end: rawTicketTotal + displayEnd,
+    displayStart,
+    displayEnd,
+    namespace: 'bonus',
+    source: 'sbt-bonus',
+  })
+}
+
+function appendCompactedBonusIntervals(entry, rawTicketTotal, displayTickets) {
+  if (!displayTickets.length) return
+
+  displayTickets.sort((left, right) => left - right)
+  let displayStart = displayTickets[0]
+  let previous = displayStart
+
+  for (let index = 1; index < displayTickets.length; index += 1) {
+    const ticket = displayTickets[index]
+    if (ticket === previous + 1) {
+      previous = ticket
+      continue
+    }
+
+    pushBonusInterval(entry, rawTicketTotal, displayStart, previous)
+    displayStart = ticket
+    previous = ticket
+  }
+
+  pushBonusInterval(entry, rawTicketTotal, displayStart, previous)
+}
+
+function allocateShuffledBonusIntervals(entriesByAddress, rawTicketTotal, bonusShuffleSeed) {
+  const bonusEntries = [...entriesByAddress.values()]
+    .filter((entry) => entry.bonusTickets > 0)
+    .sort((left, right) => left.userAddress.localeCompare(right.userAddress))
+  const claims = []
+
+  for (const entry of bonusEntries) {
+    for (let claimIndex = 1; claimIndex <= entry.bonusTickets; claimIndex += 1) {
+      claims.push({
+        userAddress: entry.userAddress,
+        claimIndex,
+        sortKey: sha256Hex(`${bonusShuffleSeed}:${entry.userAddress}:${claimIndex}`),
+      })
+    }
+  }
+
+  claims.sort((left, right) => {
+    if (left.sortKey !== right.sortKey) return left.sortKey.localeCompare(right.sortKey)
+    if (left.userAddress !== right.userAddress) return left.userAddress.localeCompare(right.userAddress)
+    return left.claimIndex - right.claimIndex
+  })
+
+  const displayTicketsByAddress = new Map()
+  for (let index = 0; index < claims.length; index += 1) {
+    const claim = claims[index]
+    const displayTicket = index + 1
+    const displayTickets = displayTicketsByAddress.get(claim.userAddress) || []
+    displayTickets.push(displayTicket)
+    displayTicketsByAddress.set(claim.userAddress, displayTickets)
+  }
+
+  for (const entry of bonusEntries) {
+    appendCompactedBonusIntervals(entry, rawTicketTotal, displayTicketsByAddress.get(entry.userAddress) || [])
+  }
+
+  return claims.length
+}
+
+function updateEntryIntervalBounds(entriesByAddress) {
   for (const entry of entriesByAddress.values()) {
+    entry.ticketIntervals.sort((left, right) => {
+      const leftNamespace = left.namespace === 'bonus' ? 1 : 0
+      const rightNamespace = right.namespace === 'bonus' ? 1 : 0
+      if (leftNamespace !== rightNamespace) return leftNamespace - rightNamespace
+      if ((left.displayStart || left.start) !== (right.displayStart || right.start)) {
+        return (left.displayStart || left.start) - (right.displayStart || right.start)
+      }
+      return left.start - right.start
+    })
     const ranges = entry.ticketIntervals.filter((range) => range.end >= range.start)
     entry.ticketStart = ranges.length ? Math.min(...ranges.map((range) => range.start)) : null
     entry.ticketEnd = ranges.length ? Math.max(...ranges.map((range) => range.end)) : null
+  }
+}
+
+function allocateIntervals(entriesByAddress, events) {
+  const rawTicketTotal = allocateRawIntervals(entriesByAddress, events)
+  const bonusShuffleSeed = deriveBonusShuffleSeed(entriesByAddress, rawTicketTotal)
+  const shuffledBonusTicketTotal = allocateShuffledBonusIntervals(
+    entriesByAddress,
+    rawTicketTotal,
+    bonusShuffleSeed,
+  )
+
+  updateEntryIntervalBounds(entriesByAddress)
+
+  return {
+    rawTicketTotal,
+    shuffledBonusTicketTotal,
+    bonusShuffleSeed,
+    bonusShuffleVersion: BONUS_SHUFFLE_VERSION,
   }
 }
 
@@ -324,16 +449,26 @@ async function main() {
   })
 
   const entriesByAddress = aggregateBaseTickets(allEvents, resolved.canonicalSources)
-  allocateIntervals(entriesByAddress, allEvents)
+  const allocation = allocateIntervals(entriesByAddress, allEvents)
   const entries = finalizeEntries(entriesByAddress)
   const totalRawTickets = entries.reduce((sum, entry) => sum + entry.rawTickets, 0)
   const totalBonusTickets = entries.reduce((sum, entry) => sum + entry.bonusTickets, 0)
   const totalFinalTickets = entries.reduce((sum, entry) => sum + entry.finalTickets, 0)
+  if (allocation.rawTicketTotal !== totalRawTickets) {
+    throw new Error(`raw ticket allocation mismatch: ${allocation.rawTicketTotal} != ${totalRawTickets}`)
+  }
+  if (allocation.shuffledBonusTicketTotal !== totalBonusTickets) {
+    throw new Error(
+      `bonus ticket allocation mismatch: ${allocation.shuffledBonusTicketTotal} != ${totalBonusTickets}`,
+    )
+  }
   const entriesWithOldSourceAddresses = entries.filter((entry) => entry.sourceAddresses.length > 1).length
   const hashPayload = {
     campaignStart: CAMPAIGN_START,
     campaignEnd: CAMPAIGN_END,
     source: sourceResult.source,
+    bonusShuffleVersion: allocation.bonusShuffleVersion,
+    bonusShuffleSeed: allocation.bonusShuffleSeed,
     totalRawTickets,
     totalBonusTickets,
     totalFinalTickets,
@@ -345,9 +480,11 @@ async function main() {
   }
   const ledgerHash = `0x${createHash('sha256').update(stableStringify(hashPayload)).digest('hex')}`
   const candidateSourceLimited = args.source !== 'onchain'
+  const generatedAt = Math.floor(Date.now() / 1000)
+  const bonusShuffleLocked = generatedAt >= CAMPAIGN_END
   const ledger = {
     mode: 'buyback-ledger',
-    generatedAt: Math.floor(Date.now() / 1000),
+    generatedAt,
     campaignStart: CAMPAIGN_START,
     campaignEnd: CAMPAIGN_END,
     totalEntries: entries.length,
@@ -358,6 +495,10 @@ async function main() {
     candidateSourceLimited,
     ledgerHash,
     drawContractAddress: process.env.VITE_DRAW_CONTRACT || null,
+    bonusShuffleVersion: allocation.bonusShuffleVersion,
+    bonusShuffleSeed: allocation.bonusShuffleSeed,
+    bonusShuffleLocked,
+    bonusShuffleLockedAt: bonusShuffleLocked ? CAMPAIGN_END : null,
     source: sourceResult.source,
     entriesWithOldSourceAddresses,
     walletMigrationSource: remoteWalletMigration.meta,
@@ -372,7 +513,9 @@ async function main() {
       'RenaCrypt, Pack 7/9, and other packs are not counted unless the official rules change.',
       'Base ticket intervals are ordered by block number, transaction index, log index, timestamp, tx hash, then event id.',
       'Raw tickets use stable R-prefixed display numbers in buyback transaction order.',
-      'SBT bonus tickets use independent B-prefixed display numbers. Their global draw numbers are appended after raw tickets for contract compatibility.',
+      `SBT bonus tickets use independent B-prefixed display numbers allocated by deterministic shuffle ${allocation.bonusShuffleVersion}.`,
+      'Bonus shuffle seed is derived from raw ticket ownership and excludes generatedAt and ledgerHash to avoid circular randomness.',
+      'SBT bonus global draw numbers are appended after raw tickets for contract compatibility.',
       'SBT bonus display numbers are provisional until the final ledger is locked.',
       'Leaderboard rank is sorted by final tickets, then raw tickets, then first eligible event time.',
       candidateSourceLimited
