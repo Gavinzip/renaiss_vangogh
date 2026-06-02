@@ -23,27 +23,27 @@ import type { DrawStatus } from '../lib/wallet/bsc'
 const DRAW_ANIMATION_SRC = '/draw-animation.mp4'
 
 const DEMO_WINNER_TICKETS_BY_SLOT = [
-  11111n,
-  12095n,
-  10000n,
-  14396n,
-  10119n,
-  10595n,
-  11950n,
-  11585n,
-  13743n,
-  10813n,
-  12333n,
-  18409n,
-  12881n,
-  22221n,
-  34017n,
-  45678n,
-  57931n,
-  68888n,
-  73456n,
-  91827n,
-  111110n,
+  '11111',
+  '12095',
+  '10000',
+  '14396',
+  '10119',
+  '10595',
+  '11950',
+  '11585',
+  '13743',
+  '10813',
+  '12333',
+  '18409',
+  '12881',
+  '22221',
+  '34017',
+  '45678',
+  '57931',
+  '68888',
+  '73456',
+  '91827',
+  '111110',
 ] as const
 
 type DrawResultSource = 'contract' | 'demo'
@@ -53,7 +53,7 @@ interface DrawWinnerResult {
   prizeOrdinal: number
   slotIndex: number
   source: DrawResultSource
-  ticket: bigint
+  ticket: string
 }
 
 function wait(ms: number) {
@@ -71,16 +71,17 @@ function buildWinnerResult({
   ledger: RaffleLedger
   slotIndex: number
   source: DrawResultSource
-  ticket: bigint
+  ticket: bigint | string
 }): DrawWinnerResult {
   const prizeGroup = prizeGroupForSlot(slotIndex)
+  const ticketNumber = ticket.toString()
   return {
-    owner: findWinnerCandidate({ winnerTicket: ticket, ledger, identities }),
+    owner: findWinnerCandidate({ winnerTicket: BigInt(ticketNumber), ledger, identities }),
     prizeGroupId: prizeGroup.id,
     prizeOrdinal: prizeOrdinalInGroup(slotIndex),
     slotIndex,
     source,
-    ticket,
+    ticket: ticketNumber,
   }
 }
 
@@ -95,6 +96,7 @@ export function DrawReveal({
   drawStatus,
   hasWallet,
   isContractBusy,
+  isContractLedgerMismatch,
   onConnectWallet,
   onRequestDraw,
   onDrawContractWinners,
@@ -109,6 +111,7 @@ export function DrawReveal({
   drawStatus: DrawStatus | null
   hasWallet: boolean
   isContractBusy: boolean
+  isContractLedgerMismatch: boolean
   onConnectWallet: () => void
   onRequestDraw: () => Promise<void>
   onDrawContractWinners: (count: number) => Promise<bigint[]>
@@ -118,6 +121,7 @@ export function DrawReveal({
   const [selectedPrizeGroupId, setSelectedPrizeGroupId] = useState<PrizeGroupId>('grand')
   const [drawMode, setDrawMode] = useState<PrizeDrawMode>('single')
   const [demoResults, setDemoResults] = useState<DrawWinnerResult[]>([])
+  const [revealedContractResults, setRevealedContractResults] = useState<DrawWinnerResult[]>([])
   const [currentReveal, setCurrentReveal] = useState<DrawWinnerResult | null>(null)
   const [isSequenceRunning, setIsSequenceRunning] = useState(false)
   const [sequenceMessage, setSequenceMessage] = useState('')
@@ -158,8 +162,8 @@ export function DrawReveal({
     [ledger, walletIdentities, winnerTickets],
   )
   const isLiveRunMode = isDrawNetworkKey(runMode)
-  const visibleResults = isLiveRunMode ? contractResults : demoResults
-  const resultSource: 'contract' | 'demo' | 'empty' = isLiveRunMode ? (contractResults.length > 0 ? 'contract' : 'empty') : demoResults.length > 0 ? 'demo' : 'empty'
+  const visibleResults = isLiveRunMode ? revealedContractResults : demoResults
+  const resultSource: 'contract' | 'demo' | 'empty' = isLiveRunMode ? (revealedContractResults.length > 0 ? 'contract' : 'empty') : demoResults.length > 0 ? 'demo' : 'empty'
   const drawnSlots = useMemo(() => new Set(visibleResults.map((result) => result.slotIndex)), [visibleResults])
   const selectedGroup = PRIZE_GROUPS.find((group) => group.id === selectedPrizeGroupId) ?? PRIZE_GROUPS[0]
   const selectedGroupCanBatch = selectedGroup.slotCount > 1
@@ -167,7 +171,8 @@ export function DrawReveal({
   const selectedRemainingSlots = remainingSlotsForGroup(selectedPrizeGroupId, drawnSlots)
   const selectedGroupSlots = slotIndexesForPrizeGroup(selectedPrizeGroupId)
   const nextContractSlot = winnerTickets.length
-  const isSelectedGroupNextOnContract = selectedGroupSlots.includes(nextContractSlot)
+  const nextRevealSlot = visibleResults.length
+  const isSelectedGroupNextToReveal = selectedGroupSlots.includes(nextRevealSlot)
   const selectedDrawCount = effectiveDrawMode === 'batch' ? selectedRemainingSlots.length : Math.min(1, selectedRemainingSlots.length)
   const selectedGroupResults = visibleResults.filter((result) => result.prizeGroupId === selectedPrizeGroupId)
   const selectedExistingRevealResults = effectiveDrawMode === 'batch' ? selectedGroupResults : selectedGroupResults.slice(0, 1)
@@ -176,23 +181,19 @@ export function DrawReveal({
   const storedSelectedReveal = selectedGroupResults[0] ?? visibleResults[visibleResults.length - 1] ?? null
   const activeReveal = currentReveal ?? storedSelectedReveal
   const winnerTicket = activeReveal?.ticket ?? null
-  const ticketNumber = winnerTicket ? winnerTicket.toString() : ''
+  const ticketNumber = winnerTicket ?? ''
   const ticketAriaLabel = winnerTicket ? `#${ticketNumber}` : copy.drawReveal.readyState
-  const ticketDigits = useMemo(() => [...ticketNumber], [ticketNumber])
+  const ticketDigits = [...ticketNumber]
   const hasTicketNumber = winnerTicket !== null
   const revealedDigitCount = digitRevealState.ticketNumber === ticketNumber ? digitRevealState.count : currentReveal ? 0 : ticketDigits.length
   const isRevealComplete = !hasTicketNumber || revealedDigitCount >= ticketDigits.length
   const isAllComplete = visibleResults.length >= TOTAL_PRIZE_DRAW_SLOTS
-  const candidateSnapshot = useMemo(
-    () =>
-      buildWinnerCandidateSnapshot({
-        winnerTicket: ticketNumber ? BigInt(ticketNumber) : null,
-        revealedDigitCount,
-        ledger,
-        identities: walletIdentities,
-      }),
-    [ledger, revealedDigitCount, ticketNumber, walletIdentities],
-  )
+  const candidateSnapshot = buildWinnerCandidateSnapshot({
+    winnerTicket: ticketNumber ? BigInt(ticketNumber) : null,
+    revealedDigitCount,
+    ledger,
+    identities: walletIdentities,
+  })
   const visibleCandidates = candidateSnapshot?.visibleCandidates ?? []
   const leadCandidate = visibleCandidates[0] ?? null
   const otherCandidates = visibleCandidates.slice(1)
@@ -205,7 +206,13 @@ export function DrawReveal({
         ? copy.drawReveal.winningLabel
         : copy.drawReveal.readyState
   const statusCopy = resultSource === 'demo' ? copy.drawReveal.demoNotice : resultSource === 'contract' ? copy.drawReveal.verified : copy.drawReveal.readyCopy
-  const isRunDisabled = isSequenceRunning || isContractBusy || (!canRevealExistingSelection && selectedRemainingSlots.length === 0) || (isLiveRunMode && !hasWallet && !canRevealExistingSelection)
+  const shouldConnectBeforeRun = isLiveRunMode && !hasWallet
+  const isRunDisabled = isSequenceRunning || isContractBusy || (isLiveRunMode && isContractLedgerMismatch) || (!shouldConnectBeforeRun && !canRevealExistingSelection && selectedRemainingSlots.length === 0)
+  const primaryRunLabel = shouldConnectBeforeRun
+    ? copy.common.connectWallet
+    : isLiveRunMode
+      ? copy.drawReveal.startContractDraw
+      : copy.drawReveal.startShowcaseDraw
 
   function candidateStrengthStyle(matchingTickets: number): CSSProperties {
     const strength = Math.max(8, Math.round((matchingTickets / maxCandidateTickets) * 100))
@@ -321,11 +328,6 @@ export function DrawReveal({
     setDigitRevealState({ ticketNumber: number, count: 0 })
     setPhase('reveal')
     centerRevealStage()
-
-    for (let count = 1; count <= number.length; count += 1) {
-      await wait(340)
-      setDigitRevealState({ ticketNumber: number, count })
-    }
   }
 
   async function revealResults(results: DrawWinnerResult[], playIntro = true) {
@@ -339,6 +341,9 @@ export function DrawReveal({
       await revealTicketDigits(result)
       if (result.source === 'demo') {
         setDemoResults((current) => (current.some((item) => item.slotIndex === result.slotIndex) ? current : [...current, result].sort((a, b) => a.slotIndex - b.slotIndex)))
+      }
+      if (result.source === 'contract') {
+        setRevealedContractResults((current) => (current.some((item) => item.slotIndex === result.slotIndex) ? current : [...current, result].sort((a, b) => a.slotIndex - b.slotIndex)))
       }
       await wait(index === results.length - 1 ? 760 : 240)
     }
@@ -360,6 +365,17 @@ export function DrawReveal({
   async function runSelectedDraw() {
     if (sequenceLockRef.current || isSequenceRunning || isContractBusy) return
     setSequenceMessage('')
+
+    if (isLiveRunMode && !hasWallet) {
+      setSequenceMessage(copy.drawReveal.contractModeNeedsWallet)
+      onConnectWallet()
+      return
+    }
+
+    if (isLiveRunMode && isContractLedgerMismatch) {
+      setSequenceMessage(copy.walletPanel.contractTotalMismatch)
+      return
+    }
 
     if (selectedRemainingSlots.length === 0) {
       if (canRevealExistingSelection) {
@@ -386,7 +402,22 @@ export function DrawReveal({
           return
         }
 
-        if (!isSelectedGroupNextOnContract) {
+        if (!isSelectedGroupNextToReveal) {
+          setSequenceMessage(`${copy.drawReveal.contractOrderNotice} ${copy.drawReveal.slotLabel} #${nextRevealSlot + 1}`)
+          return
+        }
+
+        const selectedTargetSlots = selectedRemainingSlots.slice(0, selectedDrawCount)
+        const existingContractReveals = selectedTargetSlots
+          .map((slotIndex) => contractResults.find((result) => result.slotIndex === slotIndex) ?? null)
+          .filter((result): result is DrawWinnerResult => Boolean(result))
+
+        if (existingContractReveals.length === selectedTargetSlots.length) {
+          await revealResults(existingContractReveals)
+          return
+        }
+
+        if (nextContractSlot !== nextRevealSlot || !selectedGroupSlots.includes(nextContractSlot)) {
           setSequenceMessage(`${copy.drawReveal.contractOrderNotice} ${copy.drawReveal.slotLabel} #${nextContractSlot + 1}`)
           return
         }
@@ -418,6 +449,12 @@ export function DrawReveal({
   }
 
   function queueSelectedDraw() {
+    if (shouldConnectBeforeRun) {
+      setSequenceMessage(copy.drawReveal.contractModeNeedsWallet)
+      onConnectWallet()
+      return
+    }
+
     if (!sequenceLockRef.current && canRevealExistingSelection && selectedExistingRevealResults[0]) {
       const result = selectedExistingRevealResults[0]
       setCurrentReveal(result)
@@ -427,37 +464,6 @@ export function DrawReveal({
     }
     void runSelectedDraw()
   }
-
-  useEffect(() => {
-    const root = rootRef.current
-    if (!root) return undefined
-    const activeRoot = root
-
-    function handleNativeControl(event: Event) {
-      const target = event.target instanceof Element ? event.target : null
-      const control = target?.closest<HTMLElement>('[data-draw-action], [data-draw-run-mode]')
-      if (!control || !activeRoot.contains(control)) return
-
-      const nextMode = control.dataset.drawRunMode
-      if (nextMode === 'showcase' || nextMode === 'testnet' || nextMode === 'mainnet') {
-        event.preventDefault()
-        selectRunMode(nextMode)
-        return
-      }
-
-      if (control.dataset.drawAction === 'run') {
-        event.preventDefault()
-        queueSelectedDraw()
-      }
-    }
-
-    activeRoot.addEventListener('pointerup', handleNativeControl)
-    activeRoot.addEventListener('click', handleNativeControl)
-    return () => {
-      activeRoot.removeEventListener('pointerup', handleNativeControl)
-      activeRoot.removeEventListener('click', handleNativeControl)
-    }
-  })
 
   function replay() {
     if (!hasTicketNumber) return
@@ -489,8 +495,9 @@ export function DrawReveal({
     setCurrentReveal(null)
     setDigitRevealState({ ticketNumber: '', count: 0 })
     setSequenceMessage('')
+    setRevealedContractResults([])
     onRunModeChange(nextRunMode)
-    const nextResults = isDrawNetworkKey(nextRunMode) ? contractResults : demoResults
+    const nextResults = isDrawNetworkKey(nextRunMode) ? [] : demoResults
     setPhase(nextResults.length > 0 ? 'reveal' : 'idle')
   }
 
@@ -500,12 +507,19 @@ export function DrawReveal({
     const root = rootRef.current
     if (!root || phase !== 'video') return
 
-    gsap.set(root.querySelector('.draw-reveal-result'), { autoAlpha: 0, clearProps: 'transform' })
-    gsap.set(root.querySelector('.draw-reveal-ticket'), { clearProps: 'all' })
-    gsap.set(root.querySelector('.draw-reveal-shine'), { xPercent: -115, autoAlpha: 0 })
-    gsap.set(root.querySelector('.draw-reveal-number-burst'), { autoAlpha: 0, scale: 0.52 })
-    gsap.set(root.querySelectorAll('.draw-reveal-digit'), { autoAlpha: 0, y: 48, scale: 2.35, rotationX: -68, filter: 'blur(12px)' })
-    gsap.set(root.querySelectorAll('.draw-reveal-meta > *'), { autoAlpha: 0, y: 12 })
+    const result = root.querySelector('.draw-reveal-result')
+    const ticket = root.querySelector('.draw-reveal-ticket')
+    const shine = root.querySelector('.draw-reveal-shine')
+    const burst = root.querySelector('.draw-reveal-number-burst')
+    const digits = root.querySelectorAll('.draw-reveal-digit')
+    const meta = root.querySelectorAll('.draw-reveal-meta > *')
+
+    if (result) gsap.set(result, { autoAlpha: 0, clearProps: 'transform' })
+    if (ticket) gsap.set(ticket, { clearProps: 'all' })
+    if (shine) gsap.set(shine, { xPercent: -115, autoAlpha: 0 })
+    if (burst) gsap.set(burst, { autoAlpha: 0, scale: 0.52 })
+    if (digits.length) gsap.set(digits, { autoAlpha: 0, y: 48, scale: 2.35, rotationX: -68, filter: 'blur(12px)' })
+    if (meta.length) gsap.set(meta, { autoAlpha: 0, y: 12 })
   }, [phase])
 
   useEffect(() => {
@@ -530,17 +544,23 @@ export function DrawReveal({
         const digits = root.querySelectorAll('.draw-reveal-digit')
         const meta = root.querySelectorAll('.draw-reveal-meta > *')
 
+        if (!revealStage || !ticket) return undefined
+
         const timeline = gsap.timeline({ defaults: { ease: 'power3.out', overwrite: 'auto' } })
 
+        if (digits.length) {
+          timeline
+            .set(digits, {
+              autoAlpha: 0,
+              y: reduceMotion ? 0 : 48,
+              scale: reduceMotion ? 1 : 2.35,
+              rotationX: reduceMotion ? 0 : -68,
+              filter: reduceMotion ? 'blur(0px)' : 'blur(12px)',
+            })
+            .set(digits, hasTicketNumber ? { autoAlpha: 0 } : { autoAlpha: 1, y: 0, scale: 1, rotationX: 0, filter: 'blur(0px)' })
+        }
+
         timeline
-          .set(digits, {
-            autoAlpha: 0,
-            y: reduceMotion ? 0 : 48,
-            scale: reduceMotion ? 1 : 2.35,
-            rotationX: reduceMotion ? 0 : -68,
-            filter: reduceMotion ? 'blur(0px)' : 'blur(12px)',
-          })
-          .set(digits, hasTicketNumber ? { autoAlpha: 0 } : { autoAlpha: 1, y: 0, scale: 1, rotationX: 0, filter: 'blur(0px)' })
           .fromTo(revealStage, { autoAlpha: 0 }, { autoAlpha: 1, duration: duration * 0.45 })
           .fromTo(
             ticket,
@@ -548,37 +568,53 @@ export function DrawReveal({
             { autoAlpha: 1, y: 0, scale: 1, rotationX: 0, duration },
             reduceMotion ? 0 : 0.08,
           )
-          .fromTo(
+
+        if (label) {
+          timeline.fromTo(
             label,
             { autoAlpha: 0, y: 12, scale: 0.96 },
             { autoAlpha: 1, y: 0, scale: 1, duration: reduceMotion ? 0 : 0.28 },
             reduceMotion ? 0 : 0.48,
           )
-          .fromTo(
+        }
+
+        if (number) {
+          timeline.fromTo(
             number,
             { autoAlpha: 0, scale: 0.96 },
             { autoAlpha: 1, scale: 1, duration: reduceMotion ? 0 : 0.28 },
             reduceMotion ? 0 : 0.56,
           )
-          .fromTo(
-            burst,
-            { autoAlpha: 0, scale: 0.52 },
-            { autoAlpha: 0.96, scale: 1.14, duration: reduceMotion ? 0 : 0.34, ease: 'power2.out' },
-            reduceMotion ? 0 : 0.58,
-          )
-          .fromTo(
+        }
+
+        if (burst) {
+          timeline
+            .fromTo(
+              burst,
+              { autoAlpha: 0, scale: 0.52 },
+              { autoAlpha: 0.96, scale: 1.14, duration: reduceMotion ? 0 : 0.34, ease: 'power2.out' },
+              reduceMotion ? 0 : 0.58,
+            )
+            .to(burst, { autoAlpha: 0.26, scale: reduceMotion ? 1 : 1.2, duration: reduceMotion ? 0 : 0.5, ease: 'power2.out' }, reduceMotion ? 0 : 0.9)
+        }
+
+        if (shine) {
+          timeline.fromTo(
             shine,
             { xPercent: -115, autoAlpha: 0 },
             { xPercent: 115, autoAlpha: 0.74, duration: reduceMotion ? 0 : 1.08, ease: 'power2.inOut' },
             reduceMotion ? 0 : 0.56,
           )
-          .to(burst, { autoAlpha: 0.26, scale: reduceMotion ? 1 : 1.2, duration: reduceMotion ? 0 : 0.5, ease: 'power2.out' }, reduceMotion ? 0 : 0.9)
-          .fromTo(
+        }
+
+        if (meta.length) {
+          timeline.fromTo(
             meta,
             { autoAlpha: 0, y: 12 },
             { autoAlpha: 1, y: 0, duration: reduceMotion ? 0 : 0.36, stagger: reduceMotion ? 0 : 0.06 },
             reduceMotion ? 0 : 0.98,
           )
+        }
 
         return () => timeline.kill()
       },
@@ -605,8 +641,8 @@ export function DrawReveal({
     const animatedDigits = digits.slice(animationStart, revealedDigitCount)
     const hiddenDigits = digits.slice(revealedDigitCount)
 
-    gsap.set(stableDigits, { autoAlpha: 1, y: 0, scale: 1, rotationX: 0, filter: 'blur(0px)' })
-    gsap.set(hiddenDigits, { autoAlpha: 0, y: 48, scale: 2.35, rotationX: -68, filter: 'blur(12px)' })
+    if (stableDigits.length) gsap.set(stableDigits, { autoAlpha: 1, y: 0, scale: 1, rotationX: 0, filter: 'blur(0px)' })
+    if (hiddenDigits.length) gsap.set(hiddenDigits, { autoAlpha: 0, y: 48, scale: 2.35, rotationX: -68, filter: 'blur(12px)' })
 
     if (revealedDigitCount <= 0) return
 
@@ -618,16 +654,20 @@ export function DrawReveal({
       )
     }
 
-    timeline
-      .fromTo(burst, { autoAlpha: 0.18, scale: 0.82 }, { autoAlpha: 0.92, scale: 1.12, duration: reduceMotion ? 0 : 0.16, ease: 'power2.out' }, 0)
-      .to(burst, { autoAlpha: isRevealComplete ? 0.36 : 0.22, scale: isRevealComplete ? 1.3 : 1.06, duration: reduceMotion ? 0 : 0.32, ease: 'power2.out' })
-      .to(number, { scale: reduceMotion ? 1 : isRevealComplete ? 1.06 : 1.025, duration: reduceMotion ? 0 : 0.12, yoyo: true, repeat: 1, ease: 'power2.out' }, 0)
+    if (burst) {
+      timeline
+        .fromTo(burst, { autoAlpha: 0.18, scale: 0.82 }, { autoAlpha: 0.92, scale: 1.12, duration: reduceMotion ? 0 : 0.16, ease: 'power2.out' }, 0)
+        .to(burst, { autoAlpha: isRevealComplete ? 0.36 : 0.22, scale: isRevealComplete ? 1.3 : 1.06, duration: reduceMotion ? 0 : 0.32, ease: 'power2.out' })
+    }
+
+    if (number) {
+      timeline.to(number, { scale: reduceMotion ? 1 : isRevealComplete ? 1.06 : 1.025, duration: reduceMotion ? 0 : 0.12, yoyo: true, repeat: 1, ease: 'power2.out' }, 0)
+    }
 
     return () => {
       timeline.kill()
     }
   }, [hasTicketNumber, isRevealComplete, phase, revealedDigitCount])
-
   useEffect(() => {
     const root = rootRef.current
     if (!root) return
@@ -651,21 +691,21 @@ export function DrawReveal({
         </div>
         <div className="draw-reveal-mode-shell">
           <div className="draw-reveal-mode-switch" role="tablist" aria-label={copy.drawReveal.runMode}>
-            <button data-draw-run-mode="showcase" className={runMode === 'showcase' ? 'is-active' : ''} type="button" role="tab" aria-selected={runMode === 'showcase'} onPointerUp={() => selectRunMode('showcase')} onClick={() => selectRunMode('showcase')}>
+            <button className={runMode === 'showcase' ? 'is-active' : ''} type="button" role="tab" aria-selected={runMode === 'showcase'} onClick={() => selectRunMode('showcase')}>
               {copy.drawReveal.showcaseMode}
             </button>
-            <button data-draw-run-mode="testnet" className={runMode === 'testnet' ? 'is-active' : ''} type="button" role="tab" aria-selected={runMode === 'testnet'} onPointerUp={() => selectRunMode('testnet')} onClick={() => selectRunMode('testnet')}>
+            <button className={runMode === 'testnet' ? 'is-active' : ''} type="button" role="tab" aria-selected={runMode === 'testnet'} onClick={() => selectRunMode('testnet')}>
               {copy.drawReveal.testnetMode}
             </button>
-            <button data-draw-run-mode="mainnet" className={runMode === 'mainnet' ? 'is-active' : ''} type="button" role="tab" aria-selected={runMode === 'mainnet'} onPointerUp={() => selectRunMode('mainnet')} onClick={() => selectRunMode('mainnet')}>
+            <button className={runMode === 'mainnet' ? 'is-active' : ''} type="button" role="tab" aria-selected={runMode === 'mainnet'} onClick={() => selectRunMode('mainnet')}>
               {copy.drawReveal.mainnetMode}
             </button>
           </div>
         </div>
         <div className="draw-reveal-actions">
-          <button data-draw-action="run" className="icon-button draw-reveal-demo" type="button" onMouseDown={queueSelectedDraw} onPointerUp={queueSelectedDraw} onClick={queueSelectedDraw} disabled={isRunDisabled}>
+          <button className="icon-button draw-reveal-demo" type="button" onClick={queueSelectedDraw} disabled={isRunDisabled}>
             {isSequenceRunning || isContractBusy ? <Loader2 className="spin" size={17} /> : <Play size={17} />}
-            <span>{isLiveRunMode ? copy.drawReveal.startContractDraw : copy.drawReveal.startShowcaseDraw}</span>
+            <span>{primaryRunLabel}</span>
           </button>
           <button className="icon-button draw-reveal-replay" type="button" onClick={replay} disabled={!hasTicketNumber || isSequenceRunning}>
             <RotateCcw size={17} />
@@ -728,7 +768,7 @@ export function DrawReveal({
             </button>
           )}
           {isLiveRunMode && (
-            <button className="draw-reveal-run-secondary" type="button" onClick={() => void onRequestDraw()} disabled={!hasWallet || isContractBusy || isSequenceRunning}>
+            <button className="draw-reveal-run-secondary" type="button" onClick={() => void onRequestDraw()} disabled={!hasWallet || isContractBusy || isSequenceRunning || isContractLedgerMismatch}>
               <Crown size={16} />
               {copy.drawReveal.requestRound}
             </button>
@@ -740,9 +780,9 @@ export function DrawReveal({
           )}
         </div>
 
-        {(sequenceMessage || (isLiveRunMode && hasWallet && !isSelectedGroupNextOnContract && selectedRemainingSlots.length > 0)) && (
+        {(sequenceMessage || (isLiveRunMode && isContractLedgerMismatch) || (isLiveRunMode && hasWallet && !isSelectedGroupNextToReveal && selectedRemainingSlots.length > 0)) && (
           <p className="draw-reveal-sequence-message">
-            {sequenceMessage || `${copy.drawReveal.contractOrderNotice} ${copy.drawReveal.slotLabel} #${nextContractSlot + 1}`}
+            {sequenceMessage || (isContractLedgerMismatch ? copy.walletPanel.contractTotalMismatch : `${copy.drawReveal.contractOrderNotice} ${copy.drawReveal.slotLabel} #${nextRevealSlot + 1}`)}
           </p>
         )}
       </div>
@@ -753,7 +793,6 @@ export function DrawReveal({
         tabIndex={phase === 'reveal' && hasTicketNumber && !isRevealComplete ? 0 : undefined}
         aria-label={phase === 'reveal' && hasTicketNumber && !isRevealComplete ? copy.drawReveal.clickNext : undefined}
         onClick={() => {
-          if (isSequenceRunning) return
           if (phase === 'reveal' && hasTicketNumber && !isRevealComplete) {
             setDigitRevealState((state) => ({
               ticketNumber,
@@ -802,7 +841,7 @@ export function DrawReveal({
               <span>{statusLabel}</span>
               {hasTicketNumber ? (
                 <strong aria-label={ticketAriaLabel}>
-                  {winnerTicket && <span className="draw-reveal-prefix">#</span>}
+                  {hasTicketNumber && <span className="draw-reveal-prefix">#</span>}
                   {ticketDigits.map((digit, index) => (
                     <span
                       className={`draw-reveal-digit ${index < revealedDigitCount ? 'is-visible' : ''}`}
@@ -820,7 +859,7 @@ export function DrawReveal({
                 </div>
               )}
               {hasTicketNumber && !isRevealComplete && (
-                <small className="draw-reveal-click-cue">{isSequenceRunning ? copy.drawReveal.revealingNow : copy.drawReveal.clickNext}</small>
+                <small className="draw-reveal-click-cue">{copy.drawReveal.clickNext}</small>
               )}
             </div>
           </div>

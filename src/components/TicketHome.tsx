@@ -17,6 +17,26 @@ const RESULT_REVEAL_DELAYS_MS = [320, 1320, 2320, 3320]
 const LEDGER_SCAN_MS = 900
 
 type SearchPhase = 'idle' | 'scanning' | 'settled'
+type TicketSearchSource = 'manual' | 'connected_wallet'
+
+type TicketSearchDetails = {
+  has_query: boolean
+  source: TicketSearchSource
+}
+
+type TicketSearchResultDetails = {
+  bonus_ticket_count?: number
+  final_ticket_count?: number
+  interval_count?: number
+  raw_ticket_count?: number
+  result: 'found' | 'not_found'
+  sbt_tier?: SbtTier
+}
+
+type CopyTicketRangesDetails = {
+  interval_count: number
+  status: 'success' | 'failed'
+}
 
 const SBT_TIER_IMAGES: Partial<Record<SbtTier, string>> = {
   brown: sbtBrownImage,
@@ -75,6 +95,10 @@ export function TicketHome({
   language,
   lastLedgerRefreshAt,
   nextLedgerRefreshAt,
+  onHiddenDrawUnlock,
+  onCopyTicketRanges,
+  onTicketSearch,
+  onTicketSearchResult,
 }: {
   ledger: RaffleLedger
   entry: RaffleEntry | null
@@ -85,12 +109,17 @@ export function TicketHome({
   language: LanguageCode
   lastLedgerRefreshAt: number
   nextLedgerRefreshAt: number
+  onHiddenDrawUnlock?: () => void
+  onCopyTicketRanges?: (details: CopyTicketRangesDetails) => void
+  onTicketSearch?: (details: TicketSearchDetails) => void
+  onTicketSearchResult?: (details: TicketSearchResultDetails) => void
 }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
   const [resultRevealRun, setResultRevealRun] = useState(0)
   const [submittedQuery, setSubmittedQuery] = useState('')
   const [searchPhase, setSearchPhase] = useState<SearchPhase>('idle')
   const scanTimerRef = useRef<number | null>(null)
+  const reportedSearchResultRef = useRef('')
   const normalizedQuery = query.trim()
   const isSubmittedQuery = submittedQuery.length > 0 && submittedQuery === normalizedQuery
   const isScanningLedger = isSubmittedQuery && searchPhase === 'scanning'
@@ -101,9 +130,6 @@ export function TicketHome({
   const bonusIntervals = intervals.filter((interval) => interval.namespace === 'bonus' || interval.source === 'sbt-bonus')
   const grandPrizeOdds = probability(displayEntry, ledger.totalFinalTickets)
   const anyPrizeOdds = anyPrizeProbability(displayEntry, ledger.totalFinalTickets)
-  const ledgerHashLabel = ledger.ledgerHash
-    ? `${ledger.ledgerHash.slice(0, 8)}...${ledger.ledgerHash.slice(-6)}`
-    : copy.common.pending
   const activeSbtImage = displayEntry ? SBT_TIER_IMAGES[displayEntry.sbt] : undefined
   const activeSbtLabel = displayEntry
     ? displayEntry.sbt === 'none'
@@ -122,6 +148,23 @@ export function TicketHome({
     }
   }, [])
 
+  useEffect(() => {
+    if (!hasSettledSearch || !submittedQuery) return
+
+    const reportKey = `${submittedQuery}:${displayEntry?.userAddress ?? 'not-found'}`
+    if (reportedSearchResultRef.current === reportKey) return
+
+    reportedSearchResultRef.current = reportKey
+    onTicketSearchResult?.({
+      bonus_ticket_count: displayEntry?.bonusTickets,
+      final_ticket_count: displayEntry?.finalTickets,
+      interval_count: displayEntry?.ticketIntervals.length,
+      raw_ticket_count: displayEntry?.rawTickets,
+      result: displayEntry ? 'found' : 'not_found',
+      sbt_tier: displayEntry?.sbt,
+    })
+  }, [displayEntry, hasSettledSearch, onTicketSearchResult, submittedQuery])
+
   function clearScanTimer() {
     if (!scanTimerRef.current) return
     window.clearTimeout(scanTimerRef.current)
@@ -135,11 +178,15 @@ export function TicketHome({
     setQuery(value)
   }
 
-  function submitQuery(value = query) {
+  function submitQuery(value = query, source: TicketSearchSource = 'manual') {
     const nextQuery = value.trim()
     clearScanTimer()
     setQuery(nextQuery)
     setResultRevealRun((current) => current + 1)
+    onTicketSearch?.({
+      has_query: nextQuery.length > 0,
+      source,
+    })
     if (!nextQuery) {
       setSubmittedQuery('')
       setSearchPhase('idle')
@@ -174,8 +221,16 @@ export function TicketHome({
     try {
       await writeClipboardText(text)
       setCopyState('copied')
+      onCopyTicketRanges?.({
+        interval_count: intervals.length,
+        status: 'success',
+      })
     } catch {
       setCopyState('failed')
+      onCopyTicketRanges?.({
+        interval_count: intervals.length,
+        status: 'failed',
+      })
     } finally {
       window.setTimeout(() => setCopyState('idle'), 1800)
     }
@@ -186,10 +241,15 @@ export function TicketHome({
       <section id="tickets" className="panel hero ticket-home-hero">
         <div className="ticket-search-stage">
           <div className="ticket-headline">
-            <span className="chip">
+            <button
+              className="chip chain-badge-trigger"
+              type="button"
+              onClick={onHiddenDrawUnlock}
+              aria-label={copy.ticketHome.chainBadge}
+            >
               <Gem size={14} />
               {copy.ticketHome.chainBadge}
-            </span>
+            </button>
             <h1>
               <span className="line">{copy.ticketHome.titleVanGogh}</span>
               <span className="line">
@@ -220,7 +280,7 @@ export function TicketHome({
           </div>
 
           {connectedAddress && (
-            <button className="wallet-query-button" type="button" onClick={() => submitQuery(connectedAddress)}>
+            <button className="wallet-query-button" type="button" onClick={() => submitQuery(connectedAddress, 'connected_wallet')}>
               <Ticket size={17} />
               {copy.ticketHome.useConnectedWallet}
             </button>
@@ -323,10 +383,6 @@ export function TicketHome({
           <div>
             <span>{copy.ticketHome.nextScan}</span>
             <strong>{formatRefreshTime(nextLedgerRefreshAt, language)}</strong>
-          </div>
-          <div>
-            <span>{copy.ticketHome.ledgerHash}</span>
-            <strong>{ledgerHashLabel}</strong>
           </div>
         </section>
       </section>
@@ -494,7 +550,7 @@ export function TicketHome({
           <section className="panel ledger-mini-panel">
             <Gem size={24} />
             <div>
-              <span>Total final tickets</span>
+              <span>{copy.ticketHome.totalFinalTickets}</span>
               <strong>{compactNumber(ledger.totalFinalTickets)}</strong>
               <small>
                 {compactNumber(ledger.totalEntries)}{' '}

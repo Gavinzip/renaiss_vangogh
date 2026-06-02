@@ -19,6 +19,8 @@ export function WalletPanel({
   onRequestDraw,
   onDrawNext,
   copy,
+  ledgerTotalTickets,
+  transactionHashes,
 }: {
   network: DrawNetworkConfig
   wallet: ConnectedWallet | null
@@ -30,6 +32,8 @@ export function WalletPanel({
   onRequestDraw: () => void
   onDrawNext: () => void
   copy: AppCopy
+  ledgerTotalTickets: number
+  transactionHashes: string[]
 }) {
   const drawState = status
     ? status.fulfilled
@@ -41,6 +45,11 @@ export function WalletPanel({
       ? copy.common.pending
       : copy.walletPanel.disconnected
   const isWalletOnSelectedNetwork = wallet?.chainId === network.chainId
+  const hasTicketMismatch = Boolean(status && status.totalTickets !== BigInt(ledgerTotalTickets))
+  const explorerBaseUrl = network.blockExplorerUrls[0]?.replace(/\/$/, '') ?? ''
+  const contractExplorerUrl = `${explorerBaseUrl}/address/${network.contractAddress}`
+  const contractEventsUrl = `${contractExplorerUrl}#events`
+  const chainActionsDisabled = busy !== null || !wallet || hasTicketMismatch
 
   return (
     <section className="panel wallet-panel">
@@ -76,11 +85,11 @@ export function WalletPanel({
           {busy === 'read' ? <Loader2 className="spin" size={18} /> : <Database size={18} />}
           {copy.walletPanel.read}
         </button>
-        <button onClick={onRequestDraw} disabled={busy !== null || !wallet}>
+        <button onClick={onRequestDraw} disabled={chainActionsDisabled || Boolean(status?.requested)}>
           {busy === 'draw' ? <Loader2 className="spin" size={18} /> : <Sparkles size={18} />}
           {copy.walletPanel.draw}
         </button>
-        <button onClick={onDrawNext} disabled={busy !== null || !wallet}>
+        <button onClick={onDrawNext} disabled={chainActionsDisabled || !status?.requested || Boolean(status?.fulfilled)}>
           {busy === 'drawNext' ? <Loader2 className="spin" size={18} /> : <Sparkles size={18} />}
           {copy.walletPanel.drawNext}
         </button>
@@ -108,6 +117,10 @@ export function WalletPanel({
             <strong>{compactNumber(status.totalTickets)}</strong>
           </div>
           <div>
+            <span>{copy.walletPanel.ledgerTotalTickets}</span>
+            <strong>{compactNumber(ledgerTotalTickets)}</strong>
+          </div>
+          <div>
             <span>{copy.walletPanel.drawState}</span>
             <strong>{drawState}</strong>
           </div>
@@ -122,6 +135,10 @@ export function WalletPanel({
         </div>
       )}
 
+      {hasTicketMismatch && (
+        <p className="message wallet-warning-message">{copy.walletPanel.contractTotalMismatch}</p>
+      )}
+
       {status?.winnerTickets.length ? (
         <div className="winner-strip">
           {status.winnerTickets.map((ticket) => (
@@ -129,6 +146,23 @@ export function WalletPanel({
           ))}
         </div>
       ) : null}
+
+      <div className="wallet-link-panel">
+        <span>{copy.walletPanel.blockchainLinks}</span>
+        <div>
+          <a href={contractExplorerUrl} target="_blank" rel="noreferrer">
+            {copy.walletPanel.contractExplorer}
+          </a>
+          <a href={contractEventsUrl} target="_blank" rel="noreferrer">
+            {copy.walletPanel.eventLogs}
+          </a>
+          {transactionHashes.map((hash) => (
+            <a href={`${explorerBaseUrl}/tx/${hash}`} target="_blank" rel="noreferrer" key={hash}>
+              {hash.slice(0, 10)}...
+            </a>
+          ))}
+        </div>
+      </div>
 
       {message && <p className="message">{message}</p>}
     </section>

@@ -1,18 +1,21 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, FileCode2, Loader2, ShieldCheck, Ticket, Trophy } from 'lucide-react'
 import './App.css'
 import './styles/raffle-foundation.css'
 import './styles/raffle-tickets.css'
 import './styles/raffle-rules.css'
 import './styles/raffle-draw.css'
+import './styles/raffle-simulator.css'
 import './styles/raffle-polish.css'
 import renaissLogo from './assets/renaiss-logo-alpha-cropped.png'
 import liveDrawImage from './assets/van-gogh-live-source.jpeg'
 import { ContractDetails } from './components/ContractDetails'
 import { DrawReveal } from './components/DrawReveal'
 import { PrizeRules } from './components/PrizeRules'
+import { SimpleDrawSimulator } from './components/SimpleDrawSimulator'
 import { TicketHome } from './components/TicketHome'
 import { WalletPanel } from './components/WalletPanel'
+import { initializeAnalytics, trackEvent, trackPageView } from './lib/analytics'
 import { COPY, LANGUAGES, type LanguageCode } from './lib/i18n'
 import { loadRaffleLedger } from './lib/ticketing/openMonitor'
 import { entryMatches } from './lib/ticketing/display'
@@ -22,18 +25,18 @@ import { DRAW_NETWORKS, isDrawNetworkKey, type DrawNetworkKey, type DrawRunMode 
 import {
   connectInjectedWallet,
   drawNextWinner,
-  readPublicDrawStatus,
   readDrawStatus,
   requestContractDraw,
   type ConnectedWallet,
   type DrawStatus,
 } from './lib/wallet/bsc'
 
-type PageKey = 'tickets' | 'rules' | 'draw'
+type PageKey = 'tickets' | 'rules' | 'simulator' | 'draw'
 
 const LEDGER_REFRESH_INTERVAL_MS = 15 * 60 * 1000
+const SECRET_DRAW_UNLOCK_CLICKS = 3
 
-const NAV_ITEMS: PageKey[] = ['tickets', 'rules', 'draw']
+const PUBLIC_NAV_ITEMS: PageKey[] = ['tickets', 'rules', 'simulator']
 type DrawBusyState = 'connect' | 'read' | 'draw' | 'drawNext' | null
 
 function PageHeader({
@@ -71,17 +74,36 @@ export default function App() {
   const [drawRunMode, setDrawRunMode] = useState<DrawRunMode>('showcase')
   const [winnerTicketsByNetwork, setWinnerTicketsByNetwork] = useState<Partial<Record<DrawNetworkKey, bigint[]>>>({})
   const [drawStatusByNetwork, setDrawStatusByNetwork] = useState<Partial<Record<DrawNetworkKey, DrawStatus>>>({})
+  const [drawTxHashesByNetwork, setDrawTxHashesByNetwork] = useState<Partial<Record<DrawNetworkKey, string[]>>>({})
   const [drawMessage, setDrawMessage] = useState('')
   const [drawBusy, setDrawBusy] = useState<DrawBusyState>(null)
   const [walletIdentities, setWalletIdentities] = useState<WalletIdentityMap>({})
   const [language, setLanguage] = useState<LanguageCode>('zh-TW')
   const [lastLedgerRefreshAt, setLastLedgerRefreshAt] = useState<number>(0)
   const [nextLedgerRefreshAt, setNextLedgerRefreshAt] = useState<number>(0)
+  const [drawUnlocked, setDrawUnlocked] = useState(false)
+  const drawUnlockHitsRef = useRef(0)
   const copy = COPY[language]
+  const activePage: PageKey = page === 'draw' && !drawUnlocked ? 'simulator' : page
   const activeDrawNetworkKey: DrawNetworkKey = isDrawNetworkKey(drawRunMode) ? drawRunMode : 'mainnet'
   const activeDrawNetwork = DRAW_NETWORKS[activeDrawNetworkKey]
-  const activeWinnerTickets = drawStatusByNetwork[activeDrawNetworkKey]?.winnerTickets ?? winnerTicketsByNetwork[activeDrawNetworkKey] ?? []
-  const activeDrawStatus = drawStatusByNetwork[activeDrawNetworkKey] ?? null
+  const activeStoredDrawStatus = drawStatusByNetwork[activeDrawNetworkKey] ?? null
+  const activeWinnerTickets = wallet ? (activeStoredDrawStatus?.winnerTickets ?? winnerTicketsByNetwork[activeDrawNetworkKey] ?? []) : []
+  const activeDrawStatus = wallet ? activeStoredDrawStatus : null
+  const activeDrawTxHashes = drawTxHashesByNetwork[activeDrawNetworkKey] ?? []
+  const isActiveContractLedgerMismatch = Boolean(activeDrawStatus && activeDrawStatus.totalTickets !== BigInt(ledger?.totalFinalTickets ?? 0))
+  const visibleNavItems = useMemo<PageKey[]>(
+    () => (drawUnlocked ? [...PUBLIC_NAV_ITEMS, 'draw'] : PUBLIC_NAV_ITEMS),
+    [drawUnlocked],
+  )
+
+  useEffect(() => {
+    initializeAnalytics()
+  }, [])
+
+  useEffect(() => {
+    trackPageView(activePage)
+  }, [activePage])
 
   useEffect(() => {
     let alive = true
@@ -126,36 +148,34 @@ export default function App() {
     }
   }, [])
 
-  useEffect(() => {
-    if (!isDrawNetworkKey(drawRunMode) || wallet) return undefined
-    let alive = true
-    const networkKey = drawRunMode
-    const network = DRAW_NETWORKS[networkKey]
-
-    async function refreshPublicDrawStatus() {
-      setDrawMessage('')
-      try {
-        const nextStatus = await readPublicDrawStatus(network.contractAddress, networkKey)
-        if (!alive) return
-        setDrawStatusByNetwork((current) => ({ ...current, [networkKey]: nextStatus }))
-        setWinnerTicketsByNetwork((current) => ({ ...current, [networkKey]: nextStatus.winnerTickets }))
-      } catch (error) {
-        if (!alive) return
-        setDrawMessage(error instanceof Error ? error.message : copy.walletPanel.readFailed)
-      }
-    }
-
-    void refreshPublicDrawStatus()
-
-    return () => {
-      alive = false
-    }
-  }, [copy.walletPanel.readFailed, drawRunMode, wallet])
-
   const selectedEntry = useMemo(() => {
     if (!ledger || !query.trim()) return null
     return ledger.entries.find((entry) => entryMatches(entry, query)) ?? null
   }, [ledger, query])
+
+  function handlePageChange(nextPage: PageKey) {
+    setPage(nextPage)
+    trackEvent('navigation_select', {
+      draw_unlocked: drawUnlocked,
+      page: nextPage,
+    })
+  }
+
+  function handleLanguageChange(nextLanguage: LanguageCode) {
+    setLanguage(nextLanguage)
+    trackEvent('language_change', {
+      language: nextLanguage,
+    })
+  }
+
+  function handleDrawRunModeChange(nextMode: DrawRunMode) {
+    setDrawRunMode(nextMode)
+    setDrawMessage('')
+    trackEvent('draw_run_mode_change', {
+      mode: nextMode,
+    })
+  }
+
   async function readStatusForWallet(activeWallet: ConnectedWallet, networkKey: DrawNetworkKey): Promise<DrawStatus> {
     const network = DRAW_NETWORKS[networkKey]
     const nextStatus = await readDrawStatus(activeWallet.provider, network.contractAddress, networkKey)
@@ -168,12 +188,42 @@ export default function App() {
     setWalletError('')
     setDrawMessage('')
     setDrawBusy('connect')
+    trackEvent('wallet_connect', {
+      network: networkKey,
+    })
+    let walletConnected = false
     try {
       const nextWallet = await connectInjectedWallet(networkKey)
+      walletConnected = true
       setWallet(nextWallet)
+      setDrawUnlocked(true)
       setPage('draw')
-      await readStatusForWallet(nextWallet, networkKey)
+      trackEvent('wallet_connect_result', {
+        network: networkKey,
+        status: 'success',
+      })
+      try {
+        await readStatusForWallet(nextWallet, networkKey)
+        trackEvent('draw_status_read', {
+          network: networkKey,
+          status: 'success',
+          trigger: 'wallet_connect',
+        })
+      } catch (error) {
+        trackEvent('draw_status_read', {
+          network: networkKey,
+          status: 'error',
+          trigger: 'wallet_connect',
+        })
+        throw error
+      }
     } catch (error) {
+      if (!walletConnected) {
+        trackEvent('wallet_connect_result', {
+          network: networkKey,
+          status: 'error',
+        })
+      }
       setWalletError(error instanceof Error ? error.message : copy.walletPanel.connectionFailed)
     } finally {
       setDrawBusy(null)
@@ -183,13 +233,27 @@ export default function App() {
   async function refreshDrawStatus(networkKey = activeDrawNetworkKey) {
     if (!wallet) {
       setDrawMessage(copy.walletPanel.connectFirst)
+      trackEvent('draw_status_read', {
+        network: networkKey,
+        status: 'blocked_no_wallet',
+      })
       return
     }
     setDrawBusy('read')
     setDrawMessage('')
     try {
       await readStatusForWallet(wallet, networkKey)
+      trackEvent('draw_status_read', {
+        network: networkKey,
+        status: 'success',
+        trigger: 'manual_refresh',
+      })
     } catch (error) {
+      trackEvent('draw_status_read', {
+        network: networkKey,
+        status: 'error',
+        trigger: 'manual_refresh',
+      })
       setDrawMessage(error instanceof Error ? error.message : copy.walletPanel.readFailed)
     } finally {
       setDrawBusy(null)
@@ -199,16 +263,33 @@ export default function App() {
   async function requestDrawRound(networkKey = activeDrawNetworkKey) {
     if (!wallet) {
       setDrawMessage(copy.walletPanel.connectFirst)
+      trackEvent('draw_request', {
+        network: networkKey,
+        status: 'blocked_no_wallet',
+      })
       return
     }
     const network = DRAW_NETWORKS[networkKey]
     setDrawBusy('draw')
     setDrawMessage('')
+    trackEvent('draw_request', {
+      network: networkKey,
+      status: 'start',
+    })
     try {
       const hash = await requestContractDraw(wallet.provider, network.contractAddress, networkKey)
+      setDrawTxHashesByNetwork((current) => ({ ...current, [networkKey]: [hash, ...(current[networkKey] ?? [])] }))
       setDrawMessage(`${copy.walletPanel.drawSent}: ${hash}`)
       await readStatusForWallet(wallet, networkKey)
+      trackEvent('draw_request', {
+        network: networkKey,
+        status: 'success',
+      })
     } catch (error) {
+      trackEvent('draw_request', {
+        network: networkKey,
+        status: 'error',
+      })
       setDrawMessage(error instanceof Error ? error.message : copy.walletPanel.drawFailed)
     } finally {
       setDrawBusy(null)
@@ -218,6 +299,11 @@ export default function App() {
   async function drawContractWinners(count: number, networkKey = activeDrawNetworkKey): Promise<bigint[]> {
     if (!wallet) {
       setDrawMessage(copy.walletPanel.connectFirst)
+      trackEvent('draw_next', {
+        network: networkKey,
+        requested_count: count,
+        status: 'blocked_no_wallet',
+      })
       return []
     }
 
@@ -226,22 +312,52 @@ export default function App() {
     const revealedTickets: bigint[] = []
     setDrawBusy('drawNext')
     setDrawMessage('')
+    trackEvent('draw_next', {
+      network: networkKey,
+      requested_count: count,
+      status: 'start',
+    })
     try {
       for (let index = 0; index < count; index += 1) {
         const previousCount = networkWinnerTickets.length + revealedTickets.length
         const hash = await drawNextWinner(wallet.provider, network.contractAddress, networkKey)
+        setDrawTxHashesByNetwork((current) => ({ ...current, [networkKey]: [hash, ...(current[networkKey] ?? [])] }))
         const nextStatus = await readStatusForWallet(wallet, networkKey)
         const nextTicket = nextStatus.winnerTickets[previousCount]
         if (nextTicket) revealedTickets.push(nextTicket)
         setDrawMessage(`${copy.walletPanel.drawNextSent}: ${hash}`)
       }
+      trackEvent('draw_next', {
+        network: networkKey,
+        requested_count: count,
+        revealed_count: revealedTickets.length,
+        status: 'success',
+      })
       return revealedTickets
     } catch (error) {
+      trackEvent('draw_next', {
+        network: networkKey,
+        requested_count: count,
+        revealed_count: revealedTickets.length,
+        status: 'error',
+      })
       setDrawMessage(error instanceof Error ? error.message : copy.walletPanel.drawNextFailed)
       return revealedTickets
     } finally {
       setDrawBusy(null)
     }
+  }
+
+  function handleHiddenDrawUnlockHit() {
+    drawUnlockHitsRef.current += 1
+    if (drawUnlockHitsRef.current < SECRET_DRAW_UNLOCK_CLICKS) return
+
+    drawUnlockHitsRef.current = 0
+    setDrawUnlocked(true)
+    setPage('draw')
+    trackEvent('hidden_draw_unlock', {
+      status: 'success',
+    })
   }
 
   if (loadError) {
@@ -266,7 +382,7 @@ export default function App() {
   }
 
   return (
-    <main className={`app-shell raffle-shell page-${page}`}>
+    <main className={`app-shell raffle-shell page-${activePage}`}>
       <header className="nav">
         <div className="nav-main-row">
           <a
@@ -274,21 +390,21 @@ export default function App() {
             href="#tickets"
             onClick={(event) => {
               event.preventDefault()
-              setPage('tickets')
+              handlePageChange('tickets')
             }}
           >
             <img className="brand-logo" src={renaissLogo} alt="Renaiss" />
             <span className="brand-text">{copy.common.brand}</span>
           </a>
           <nav className="nav-links nav-inline-links" aria-label="Lucky draw pages">
-            {NAV_ITEMS.map((key) => (
+            {visibleNavItems.map((key) => (
               <a
-                className={page === key ? 'active' : ''}
+                className={activePage === key ? 'active' : ''}
                 href={`#${key}`}
                 key={key}
                 onClick={(event) => {
                   event.preventDefault()
-                  setPage(key)
+                  handlePageChange(key)
                 }}
               >
                 {copy.nav[key]}
@@ -300,7 +416,7 @@ export default function App() {
               <span>{copy.common.language}</span>
               <select
                 value={language}
-                onChange={(event) => setLanguage(event.target.value as LanguageCode)}
+                onChange={(event) => handleLanguageChange(event.target.value as LanguageCode)}
                 aria-label={copy.common.language}
               >
                 {LANGUAGES.map((item) => (
@@ -324,7 +440,7 @@ export default function App() {
         </section>
       )}
 
-      {page === 'tickets' && (
+      {activePage === 'tickets' && (
         <TicketHome
           entry={selectedEntry}
           ledger={ledger}
@@ -335,12 +451,28 @@ export default function App() {
           language={language}
           lastLedgerRefreshAt={lastLedgerRefreshAt}
           nextLedgerRefreshAt={nextLedgerRefreshAt}
+          onHiddenDrawUnlock={handleHiddenDrawUnlockHit}
+          onCopyTicketRanges={(details) => trackEvent('copy_ticket_ranges', details)}
+          onTicketSearch={(details) => trackEvent('ticket_search', details)}
+          onTicketSearchResult={(details) => trackEvent('ticket_search_result', details)}
         />
       )}
 
-      {page === 'rules' && <PrizeRules copy={copy} />}
+      {activePage === 'rules' && <PrizeRules copy={copy} />}
 
-      {page === 'draw' && (
+      {activePage === 'simulator' && (
+        <>
+          <PageHeader
+            eyebrow={copy.simulation.eyebrow}
+            title={copy.simulation.title}
+            copy={copy.simulation.copy}
+            icon={Ticket}
+          />
+          <SimpleDrawSimulator ledger={ledger} walletIdentities={walletIdentities} copy={copy} />
+        </>
+      )}
+
+      {activePage === 'draw' && (
         <>
           <PageHeader
             eyebrow={copy.draw.eyebrow}
@@ -351,10 +483,7 @@ export default function App() {
           <section className="page-grid contract-page">
             <DrawReveal
               runMode={drawRunMode}
-              onRunModeChange={(nextMode) => {
-                setDrawRunMode(nextMode)
-                setDrawMessage('')
-              }}
+              onRunModeChange={handleDrawRunModeChange}
               winnerTickets={activeWinnerTickets}
               totalTickets={ledger.totalFinalTickets}
               ledger={ledger}
@@ -363,6 +492,7 @@ export default function App() {
               drawStatus={activeDrawStatus}
               hasWallet={Boolean(wallet)}
               isContractBusy={drawBusy === 'draw' || drawBusy === 'drawNext'}
+              isContractLedgerMismatch={isActiveContractLedgerMismatch}
               onConnectWallet={() => connectBscWallet(activeDrawNetworkKey)}
               onRequestDraw={() => requestDrawRound(activeDrawNetworkKey)}
               onDrawContractWinners={(count) => drawContractWinners(count, activeDrawNetworkKey)}
@@ -373,6 +503,8 @@ export default function App() {
               status={activeDrawStatus}
               message={drawMessage}
               busy={drawBusy}
+              ledgerTotalTickets={ledger.totalFinalTickets}
+              transactionHashes={activeDrawTxHashes}
               onConnectWallet={() => connectBscWallet(activeDrawNetworkKey)}
               onRefreshStatus={() => refreshDrawStatus(activeDrawNetworkKey)}
               onRequestDraw={() => requestDrawRound(activeDrawNetworkKey)}

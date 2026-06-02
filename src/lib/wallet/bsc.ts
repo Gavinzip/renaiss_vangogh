@@ -1,4 +1,4 @@
-import { BrowserProvider, Contract, JsonRpcProvider } from 'ethers'
+import { BrowserProvider, Contract } from 'ethers'
 import { luckyDrawAbi } from '../contracts/luckyDrawAbi'
 import { DRAW_NETWORKS, type DrawNetworkKey } from '../contracts/luckyDrawNetworks'
 
@@ -121,40 +121,6 @@ export async function readDrawStatus(
   networkKey: DrawNetworkKey,
 ): Promise<DrawStatus> {
   await ensureBscNetwork(provider, networkKey)
-  const contract = new Contract(contractAddress, luckyDrawAbi, provider)
-  const [
-    finalized,
-    requested,
-    fulfilled,
-    totalTickets,
-    firstWinningTicket,
-    ledgerHash,
-    prizeSlotCount,
-    winnerCount,
-  ] =
-    await contract.roundStatus()
-  const winnerTickets = winnerCount > 0n ? await contract.winnerTickets() : []
-  return {
-    finalized,
-    requested,
-    fulfilled,
-    totalTickets,
-    firstWinningTicket,
-    ledgerHash,
-    prizeSlotCount,
-    winnerCount,
-    winnerTickets,
-  }
-}
-
-export async function readPublicDrawStatus(contractAddress: string, networkKey: DrawNetworkKey): Promise<DrawStatus> {
-  const network = DRAW_NETWORKS[networkKey]
-  const provider = new JsonRpcProvider(network.rpcUrls[0], Number(network.chainId))
-  const code = await provider.getCode(contractAddress)
-  if (code === '0x') {
-    throw new Error(`No lucky draw contract found on ${network.label} at ${contractAddress}.`)
-  }
-
   const contract = new Contract(contractAddress, luckyDrawAbi, provider)
   const [
     finalized,

@@ -8,7 +8,7 @@ export function percent(value: number): string {
   return `${(value * 100).toFixed(2)}%`
 }
 
-export function compactNumber(value: number | bigint): string {
+export function compactNumber(value: number | bigint | string): string {
   return new Intl.NumberFormat(undefined).format(Number(value || 0))
 }
 
