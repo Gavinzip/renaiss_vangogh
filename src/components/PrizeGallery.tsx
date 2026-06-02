@@ -4,9 +4,9 @@ import { PRIZE_GALLERY_ITEMS } from './prizeGalleryData'
 
 const CONFIG = {
   spacingX: 38,
-  pWidth: 16,
-  pHeight: 16,
-  camZ: 29,
+  pWidth: 18,
+  pHeight: 18,
+  camZ: 26.5,
   wallAngleY: -0.25,
   snapDelay: 200,
   lerpSpeed: 0.06,
@@ -63,8 +63,8 @@ export function PrizeGallery({ onActiveChange }: { onActiveChange?: (index: numb
     const loader = new THREE.TextureLoader()
 
     function updateSceneSize(nextWidth: number, nextHeight: number) {
-      responsiveCamZ = nextWidth < 640 ? 42 : nextWidth < 980 ? 34 : CONFIG.camZ
-      galleryGroup.position.x = nextWidth < 640 ? 0 : nextWidth < 980 ? 3.5 : 9
+      responsiveCamZ = nextWidth < 640 ? 40 : nextWidth < 980 ? 29.5 : CONFIG.camZ
+      galleryGroup.position.x = nextWidth < 640 ? 0 : nextWidth < 980 ? 1.25 : 4.5
       camera.fov = nextWidth < 640 ? 54 : 45
       camera.aspect = nextWidth / nextHeight
       camera.updateProjectionMatrix()

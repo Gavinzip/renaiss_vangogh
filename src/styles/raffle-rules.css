@@ -24,7 +24,7 @@
 }
 
 .page-rules .prize-gallery-canvas {
-  inset: 0 0 0 clamp(300px, 38vw, 560px);
+  inset: 0 clamp(0.8rem, 2vw, 1.8rem) 0 clamp(360px, 34vw, 500px);
   min-height: 640px;
   opacity: 0.96;
 }
