@@ -911,22 +911,35 @@ export function DrawReveal({
   }
 
   useEffect(() => {
-    if (hasWallet && sequenceMessage === copy.drawReveal.contractModeNeedsWallet) {
+    if (!hasWallet || sequenceMessage !== copy.drawReveal.contractModeNeedsWallet) return undefined
+
+    const timeoutId = window.setTimeout(() => {
       setSequenceMessage('')
+    }, 0)
+
+    return () => {
+      window.clearTimeout(timeoutId)
     }
   }, [copy.drawReveal.contractModeNeedsWallet, hasWallet, sequenceMessage])
 
   useEffect(() => {
-    if (!isLiveRunMode || !drawStatus || drawStatus.finalized || drawStatus.winnerCount > 0n) return
-    cancelVideoPlaybackWait()
-    setRevealedContractResults([])
-    setCurrentReveal(null)
-    setCurrentBatchReveal([])
-    setDigitRevealState({ ticketNumber: '', count: 0 })
-    setSelectedPrizeGroupId('grand')
-    setBatchRevealCount(1)
-    setPhase('idle')
-  }, [cancelVideoPlaybackWait, drawStatus?.finalized, drawStatus?.state, drawStatus?.winnerCount, isLiveRunMode])
+    if (!isLiveRunMode || !drawStatus || drawStatus.finalized || drawStatus.winnerCount > 0n) return undefined
+
+    const timeoutId = window.setTimeout(() => {
+      cancelVideoPlaybackWait()
+      setRevealedContractResults([])
+      setCurrentReveal(null)
+      setCurrentBatchReveal([])
+      setDigitRevealState({ ticketNumber: '', count: 0 })
+      setSelectedPrizeGroupId('grand')
+      setBatchRevealCount(1)
+      setPhase('idle')
+    }, 0)
+
+    return () => {
+      window.clearTimeout(timeoutId)
+    }
+  }, [cancelVideoPlaybackWait, drawStatus, isLiveRunMode])
 
   function selectRunMode(nextRunMode: DrawRunMode) {
     if (nextRunMode === runMode) return

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { Copy, Gem, Search, ShieldCheck, Sparkles, Ticket, Trophy } from 'lucide-react'
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { AtSign, Copy, Gem, Hash, Search, ShieldCheck, Sparkles, Ticket, Trophy, UserRound, Wallet } from 'lucide-react'
 import sbtBrownImage from '../assets/sbt-brown.webp'
 import sbtGoldImage from '../assets/sbt-gold.webp'
 import sbtRainbowImage from '../assets/sbt-rainbow.webp'
@@ -8,7 +8,7 @@ import sbtLevelsImage from '../assets/van-gogh-sbt-levels-source.webp'
 import type { AppCopy, LanguageCode } from '../lib/i18n'
 import { packLabel } from '../lib/i18n'
 import { anyPrizeProbability, compactNumber, intervalLabel, percent, probability } from '../lib/ticketing/display'
-import type { WalletIdentityMap } from '../lib/ticketing/identities'
+import type { IdentitySuggestion, IdentitySuggestionKind, WalletIdentityMap } from '../lib/ticketing/identities'
 import { formatAddress, formatTicketRange, PACK_LABELS, PACK_WEIGHTS } from '../lib/ticketing/rules'
 import type { RaffleEntry, RaffleLeaderboardEntry, RaffleLedger, SbtTier, TicketInterval } from '../lib/ticketing/types'
 import { HoloPrizeCard } from './HoloPrizeCard'
@@ -17,11 +17,15 @@ import { RollingReveal } from './RollingReveal'
 const RESULT_REVEAL_DELAYS_MS = [320, 1320, 2320, 3320]
 const LEDGER_SCAN_MS = 180
 const INTERVAL_PAGE_SIZE = 120
+const IDENTITY_SUGGESTION_LIMIT = 8
+const IDENTITY_SUGGESTION_MIN_CHARS = 2
+const IDENTITY_SUGGESTION_DEBOUNCE_MS = 140
 const EMPTY_INTERVALS: TicketInterval[] = []
 
 type SearchPhase = 'idle' | 'scanning' | 'settled'
 type IntervalLoadState = 'idle' | 'loading' | 'ready' | 'failed'
-type TicketSearchSource = 'manual' | 'connected_wallet'
+type SuggestionLoadState = 'idle' | 'loading' | 'ready' | 'failed'
+type TicketSearchSource = 'manual' | 'connected_wallet' | 'suggestion'
 
 type TicketSearchDetails = {
   has_query: boolean
@@ -45,6 +49,13 @@ type CopyTicketRangesDetails = {
 type LoadEntryIntervalsRequest = {
   offset: number
   limit: number | 'all'
+}
+
+const SUGGESTION_ICONS: Record<IdentitySuggestionKind, typeof Wallet> = {
+  address: Wallet,
+  username: UserRound,
+  twitter: AtSign,
+  discord: Hash,
 }
 
 const SBT_TIER_IMAGES: Partial<Record<SbtTier, string>> = {
@@ -226,6 +237,7 @@ export function TicketHome({
   nextLedgerRefreshAt,
   onHiddenDrawUnlock,
   onCopyTicketRanges,
+  onLoadIdentitySuggestions,
   onResolveEntry,
   onLoadEntryIntervals,
   onTicketSearch,
@@ -243,6 +255,7 @@ export function TicketHome({
   nextLedgerRefreshAt: number
   onHiddenDrawUnlock?: () => void
   onCopyTicketRanges?: (details: CopyTicketRangesDetails) => void
+  onLoadIdentitySuggestions?: (query: string, limit?: number) => Promise<IdentitySuggestion[]>
   onResolveEntry?: (query: string) => Promise<RaffleEntry | null>
   onLoadEntryIntervals?: (query: string, request: LoadEntryIntervalsRequest) => Promise<RaffleEntry | null>
   onTicketSearch?: (details: TicketSearchDetails) => void
@@ -253,6 +266,9 @@ export function TicketHome({
   const [submittedQuery, setSubmittedQuery] = useState('')
   const [searchPhase, setSearchPhase] = useState<SearchPhase>('idle')
   const [searchError, setSearchError] = useState('')
+  const [identitySuggestions, setIdentitySuggestions] = useState<IdentitySuggestion[]>([])
+  const [suggestionLoadState, setSuggestionLoadState] = useState<SuggestionLoadState>('idle')
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false)
   const [intervalEntry, setIntervalEntry] = useState<RaffleEntry | null>(null)
   const [intervalLoadState, setIntervalLoadState] = useState<IntervalLoadState>('idle')
   const [intervalLoadError, setIntervalLoadError] = useState('')
@@ -260,6 +276,8 @@ export function TicketHome({
   const intervalRequestRef = useRef(0)
   const reportedSearchResultRef = useRef('')
   const searchRequestRef = useRef(0)
+  const suggestionRequestRef = useRef(0)
+  const suggestionsId = useId()
   const normalizedQuery = query.trim()
   const isSubmittedQuery = submittedQuery.length > 0 && submittedQuery === normalizedQuery
   const isScanningLedger = isSubmittedQuery && searchPhase === 'scanning'
@@ -302,14 +320,59 @@ export function TicketHome({
     isScanningLedger ? 'hero-empty--scanning' : '',
     hasSettledSearch && !displayEntry ? 'hero-empty--not-found' : '',
   ].filter(Boolean).join(' ')
+  const showIdentitySuggestions = suggestionsOpen && identitySuggestions.length > 0 && !isScanningLedger
 
   useEffect(() => {
     return () => {
       if (scanTimerRef.current) window.clearTimeout(scanTimerRef.current)
       searchRequestRef.current += 1
       intervalRequestRef.current += 1
+      suggestionRequestRef.current += 1
     }
   }, [])
+
+  useEffect(() => {
+    suggestionRequestRef.current += 1
+    const requestId = suggestionRequestRef.current
+    const nextQuery = normalizedQuery
+
+    if (!onLoadIdentitySuggestions || nextQuery.length < IDENTITY_SUGGESTION_MIN_CHARS || isSubmittedQuery) {
+      const idleTimeoutId = window.setTimeout(() => {
+        if (suggestionRequestRef.current !== requestId) return
+        setIdentitySuggestions([])
+        setSuggestionLoadState('idle')
+      }, 0)
+
+      return () => {
+        window.clearTimeout(idleTimeoutId)
+      }
+    }
+
+    const loadingTimeoutId = window.setTimeout(() => {
+      if (suggestionRequestRef.current !== requestId) return
+      setSuggestionLoadState('loading')
+    }, 0)
+    const timeoutId = window.setTimeout(() => {
+      if (suggestionRequestRef.current !== requestId) return
+      void onLoadIdentitySuggestions(nextQuery, IDENTITY_SUGGESTION_LIMIT)
+        .then((suggestions) => {
+          if (suggestionRequestRef.current !== requestId) return
+          setIdentitySuggestions(suggestions)
+          setSuggestionLoadState('ready')
+          setSuggestionsOpen(suggestions.length > 0)
+        })
+        .catch(() => {
+          if (suggestionRequestRef.current !== requestId) return
+          setIdentitySuggestions([])
+          setSuggestionLoadState('failed')
+        })
+    }, IDENTITY_SUGGESTION_DEBOUNCE_MS)
+
+    return () => {
+      window.clearTimeout(loadingTimeoutId)
+      window.clearTimeout(timeoutId)
+    }
+  }, [isSubmittedQuery, normalizedQuery, onLoadIdentitySuggestions])
 
   useEffect(() => {
     intervalRequestRef.current += 1
@@ -381,6 +444,7 @@ export function TicketHome({
     setSearchError('')
     setSubmittedQuery('')
     setSearchPhase('idle')
+    setSuggestionsOpen(true)
     setQuery(value)
   }
 
@@ -396,6 +460,8 @@ export function TicketHome({
     searchRequestRef.current = requestId
     clearScanTimer()
     setSearchError('')
+    setIdentitySuggestions([])
+    setSuggestionsOpen(false)
     setQuery(nextQuery)
     setResultRevealRun((current) => current + 1)
     onTicketSearch?.({
@@ -426,6 +492,10 @@ export function TicketHome({
       }
       setSearchPhase('settled')
     })
+  }
+
+  function handleSuggestionSelect(suggestion: IdentitySuggestion) {
+    submitQuery(suggestion.value, 'suggestion')
   }
 
   async function loadMoreIntervals() {
@@ -532,22 +602,60 @@ export function TicketHome({
             </p>
           </div>
 
-          <div className="hero-search">
-            <label className="search-box large">
-              <Search size={20} />
-              <input
-                data-ticket-search="true"
-                value={query}
-                onChange={(event) => handleQueryChange(event.target.value)}
-                placeholder={copy.ticketHome.walletPlaceholder}
-                spellCheck={false}
-              />
-            </label>
-            <button className="btn btn-main" type="button" onClick={() => submitQuery()}>
-              <span className="shine" />
-              <Search size={18} />
-              <span>{copy.common.search}</span>
-            </button>
+          <div className="hero-search-wrap">
+            <div className="hero-search">
+              <label className="search-box large">
+                <Search size={20} />
+                <input
+                  aria-autocomplete="list"
+                  aria-controls={showIdentitySuggestions ? suggestionsId : undefined}
+                  aria-expanded={showIdentitySuggestions}
+                  data-ticket-search="true"
+                  value={query}
+                  onBlur={() => window.setTimeout(() => setSuggestionsOpen(false), 120)}
+                  onChange={(event) => handleQueryChange(event.target.value)}
+                  onFocus={() => {
+                    if (identitySuggestions.length > 0) setSuggestionsOpen(true)
+                  }}
+                  placeholder={copy.ticketHome.walletPlaceholder}
+                  spellCheck={false}
+                />
+              </label>
+              <button className="btn btn-main" type="button" onClick={() => submitQuery()}>
+                <span className="shine" />
+                <Search size={18} />
+                <span>{copy.common.search}</span>
+              </button>
+            </div>
+
+            {showIdentitySuggestions && (
+              <div className="identity-suggestions" id={suggestionsId} role="listbox">
+                {identitySuggestions.map((suggestion) => {
+                  const SuggestionIcon = SUGGESTION_ICONS[suggestion.kind]
+                  return (
+                    <button
+                      className="identity-suggestion"
+                      key={`${suggestion.kind}:${suggestion.value}`}
+                      role="option"
+                      type="button"
+                      onClick={() => handleSuggestionSelect(suggestion)}
+                      onMouseDown={(event) => event.preventDefault()}
+                    >
+                      <span className="identity-suggestion__icon">
+                        <SuggestionIcon size={16} />
+                      </span>
+                      <span className="identity-suggestion__main">
+                        <strong>{suggestion.label}</strong>
+                        <small>{suggestion.detail}</small>
+                      </span>
+                      <span className="identity-suggestion__kind">{copy.ticketHome.lookupKinds[suggestion.kind]}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
+            {suggestionLoadState === 'failed' && <span className="sr-only">{copy.ticketHome.suggestionsUnavailable}</span>}
           </div>
 
           {connectedAddress && (

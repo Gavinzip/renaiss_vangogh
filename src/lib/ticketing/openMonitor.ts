@@ -1,7 +1,9 @@
 import { buildLedgerFromOpenMonitor, normalizeLoadedLedger } from './ledger'
+import type { IdentitySuggestion } from './identities'
 import type { OpenMonitorLuckyDrawResponse, RaffleEntry, RaffleLedger } from './types'
 
 const FULL_LEDGER_URL = import.meta.env.VITE_LEDGER_URL || '/lucky-draw-ledger.json'
+const IDENTITY_SUGGESTIONS_URL = '/api/identity-suggestions'
 const RAFFLE_ENTRY_URL = '/api/raffle-entry'
 const RAFFLE_SUMMARY_URL = '/api/raffle-summary'
 const OPEN_MONITOR_LUCKY_DRAW_URL = '/open-monitor-api/lucky-draw/leaderboard'
@@ -67,6 +69,20 @@ export async function loadRaffleEntry(query: string, options: RaffleEntryRequest
     entry?: RaffleEntry | null
   }
   return payload.entry ?? null
+}
+
+export async function loadIdentitySuggestions(query: string, limit = 8): Promise<IdentitySuggestion[]> {
+  const normalizedQuery = query.trim()
+  if (normalizedQuery.length < 2) return []
+
+  const params = new URLSearchParams({
+    limit: String(limit),
+    q: normalizedQuery,
+  })
+  const payload = (await readJson(`${IDENTITY_SUGGESTIONS_URL}?${params.toString()}`)) as {
+    suggestions?: IdentitySuggestion[]
+  }
+  return Array.isArray(payload.suggestions) ? payload.suggestions : []
 }
 
 export async function loadOpenMonitorEstimateForAudit(): Promise<RaffleLedger> {

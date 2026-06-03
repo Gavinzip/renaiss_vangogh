@@ -6,6 +6,17 @@ export interface WalletIdentity {
 
 export type WalletIdentityMap = Record<string, WalletIdentity>
 
+export type IdentitySuggestionKind = 'address' | 'username' | 'twitter' | 'discord'
+
+export interface IdentitySuggestion {
+  kind: IdentitySuggestionKind
+  label: string
+  value: string
+  detail: string
+  addressCount: number
+  sampleAddress: string
+}
+
 interface WalletIdentitiesPayload {
   identities?: WalletIdentityMap
 }

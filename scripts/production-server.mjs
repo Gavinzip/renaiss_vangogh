@@ -10,15 +10,19 @@ import {
   buildLedgerEntryResponse,
   buildLedgerSummary,
   findLedgerEntry,
+  findLedgerEntryByAddresses,
   parseEntryIntervalQuery,
   readLedgerPayload,
 } from './raffle-ledger-api.mjs'
+import { readIdentityIndex, resolveIdentityQuery, suggestIdentityQueries } from './identity-lookup.mjs'
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const distDir = resolve(repoRoot, 'dist')
 const dataDir = process.env.LUCKY_DRAW_DATA_DIR || '/data/lucky-draw'
 const cacheDir = process.env.LUCKY_DRAW_CACHE_DIR || join(dataDir, 'cache')
 const ledgerPath = process.env.LUCKY_DRAW_LEDGER_PATH || join(dataDir, 'lucky-draw-ledger.json')
+const identityLookupPath =
+  process.env.LUCKY_DRAW_IDENTITY_LOOKUP_PATH || fileURLToPath(new URL('./data/lucky-draw-wallet-identities.json', import.meta.url))
 const snapshotDir = process.env.LUCKY_DRAW_SNAPSHOT_DIR || join(dataDir, 'snapshots')
 const port = Number(process.env.PORT || 3000)
 const refreshMinutes = Math.max(1, Number(process.env.LUCKY_DRAW_REFRESH_MINUTES || 60))
@@ -130,6 +134,10 @@ function sendLedgerApiError(request, response, error) {
       'access-control-allow-origin': '*',
     },
   )
+}
+
+function readIdentityIndexForApi() {
+  return readIdentityIndex(identityLookupPath)
 }
 
 function distPathForUrl(url) {
@@ -275,7 +283,9 @@ const server = createServer((request, response) => {
         dataDir,
         cacheDir,
         ledgerPath,
+        identityLookupPath,
         ledgerExists: existsSync(ledgerPath),
+        identityLookupExists: existsSync(identityLookupPath),
         refreshMinutes,
         refreshRunning,
         lastRefresh,
@@ -321,13 +331,49 @@ const server = createServer((request, response) => {
 
     try {
       const ledger = readLedgerPayload(ledgerPath)
+      const identityIndex = readIdentityIndexForApi()
+      const identityResolution = resolveIdentityQuery(identityIndex, walletQuery)
+      const directEntry = findLedgerEntry(ledger, walletQuery)
+      const identityEntry = directEntry ? null : findLedgerEntryByAddresses(ledger, identityResolution?.addresses ?? [])
       const intervalOptions = parseEntryIntervalQuery(url.searchParams)
       sendJson(
         request,
         response,
         200,
         {
-          entry: buildLedgerEntryResponse(findLedgerEntry(ledger, walletQuery), intervalOptions),
+          entry: buildLedgerEntryResponse(directEntry || identityEntry, intervalOptions),
+          lookup: identityResolution
+            ? {
+                kind: identityResolution.kind,
+                query: identityResolution.query,
+                addressCount: identityResolution.addresses.length,
+                matchedLedger: Boolean(directEntry || identityEntry),
+                identity: identityResolution.identity,
+              }
+            : null,
+        },
+        {
+          'cache-control': 'no-store',
+          'access-control-allow-origin': '*',
+        },
+      )
+    } catch (error) {
+      sendLedgerApiError(request, response, error)
+    }
+    return
+  }
+
+  if (url.pathname === '/api/identity-suggestions') {
+    const query = url.searchParams.get('q') || ''
+    const limit = Number(url.searchParams.get('limit') || 8)
+
+    try {
+      sendJson(
+        request,
+        response,
+        200,
+        {
+          suggestions: suggestIdentityQueries(readIdentityIndexForApi(), query, limit),
         },
         {
           'cache-control': 'no-store',

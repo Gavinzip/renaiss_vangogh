@@ -3,11 +3,13 @@ import react from '@vitejs/plugin-react'
 import type { ServerResponse } from 'node:http'
 import { readFileSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { readIdentityIndex, resolveIdentityQuery, suggestIdentityQueries } from './scripts/identity-lookup.mjs'
 
 let devLedgerCache: { ledger: unknown; mtimeMs: number } | null = null
 const DEFAULT_ENTRY_INTERVAL_LIMIT = 0
 const MAX_ENTRY_INTERVAL_LIMIT = 240
 const SUMMARY_LEADERBOARD_LIMIT = 10
+const IDENTITY_LOOKUP_PATH = resolve(process.cwd(), 'scripts/data/lucky-draw-wallet-identities.json')
 
 function readDevLedger() {
   const ledgerPath = resolve(process.cwd(), 'public/lucky-draw-ledger.json')
@@ -73,6 +75,20 @@ function devFindEntry(ledger: Record<string, unknown>, query: string) {
   }) ?? null
 }
 
+function devFindEntryByAddresses(ledger: Record<string, unknown>, addresses: string[]) {
+  const normalizedAddresses = new Set(addresses.map((address) => String(address || '').toLowerCase()).filter(Boolean))
+  const entries = Array.isArray(ledger.entries) ? ledger.entries : []
+  if (!normalizedAddresses.size) return null
+
+  return (
+    entries.find((value) => {
+      const entry = value as { sourceAddresses?: unknown[]; userAddress?: unknown }
+      const entryAddresses = [entry.userAddress, ...(Array.isArray(entry.sourceAddresses) ? entry.sourceAddresses : [])]
+      return entryAddresses.some((address) => normalizedAddresses.has(String(address || '').toLowerCase()))
+    }) ?? null
+  )
+}
+
 function devParseEntryIntervalQuery(searchParams: URLSearchParams) {
   const hasLimit = searchParams.has('intervalLimit')
   const includeAll = searchParams.get('intervalLimit') === 'all'
@@ -127,12 +143,20 @@ function raffleApiDevPlugin(): Plugin {
     configureServer(server: ViteDevServer) {
       server.middlewares.use((request, response, next) => {
         const url = new URL(request.url || '/', 'http://localhost')
-        if (url.pathname !== '/api/raffle-summary' && url.pathname !== '/api/raffle-entry') {
+        if (url.pathname !== '/api/raffle-summary' && url.pathname !== '/api/raffle-entry' && url.pathname !== '/api/identity-suggestions') {
           next()
           return
         }
 
         try {
+          const identityIndex = readIdentityIndex(IDENTITY_LOOKUP_PATH)
+          if (url.pathname === '/api/identity-suggestions') {
+            sendDevJson(response, 200, {
+              suggestions: suggestIdentityQueries(identityIndex, url.searchParams.get('q') || '', Number(url.searchParams.get('limit') || 8)),
+            })
+            return
+          }
+
           const ledger = readDevLedger() as Record<string, unknown>
           if (url.pathname === '/api/raffle-summary') {
             sendDevJson(response, 200, devLedgerSummary(ledger))
@@ -144,8 +168,20 @@ function raffleApiDevPlugin(): Plugin {
             sendDevJson(response, 400, { entry: null, error: 'wallet query is required' })
             return
           }
+          const identityResolution = resolveIdentityQuery(identityIndex, walletQuery)
+          const directEntry = devFindEntry(ledger, walletQuery)
+          const identityEntry = directEntry ? null : devFindEntryByAddresses(ledger, identityResolution?.addresses ?? [])
           sendDevJson(response, 200, {
-            entry: devBuildEntryResponse(devFindEntry(ledger, walletQuery), devParseEntryIntervalQuery(url.searchParams)),
+            entry: devBuildEntryResponse(directEntry || identityEntry, devParseEntryIntervalQuery(url.searchParams)),
+            lookup: identityResolution
+              ? {
+                  kind: identityResolution.kind,
+                  query: identityResolution.query,
+                  addressCount: identityResolution.addresses.length,
+                  matchedLedger: Boolean(directEntry || identityEntry),
+                  identity: identityResolution.identity,
+                }
+              : null,
           })
         } catch (error) {
           sendDevJson(response, 503, {

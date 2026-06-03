@@ -15,7 +15,7 @@ import { InitialPageLoader } from './components/InitialPageLoader'
 import { TicketHome } from './components/TicketHome'
 import { initializeAnalytics, trackEvent, trackPageView } from './lib/analytics'
 import { COPY, LANGUAGES, type LanguageCode } from './lib/i18n'
-import { loadFullRaffleLedger, loadRaffleEntry, loadRaffleLedger } from './lib/ticketing/openMonitor'
+import { loadFullRaffleLedger, loadIdentitySuggestions, loadRaffleEntry, loadRaffleLedger } from './lib/ticketing/openMonitor'
 import { loadWalletIdentities, type WalletIdentityMap } from './lib/ticketing/identities'
 import type { RaffleEntry, RaffleLedger } from './lib/ticketing/types'
 import {
@@ -573,8 +573,9 @@ export default function App() {
 
   function clearVrfTiming(networkKey: DrawNetworkKey) {
     setDrawVrfTimingByNetwork((current) => {
-      const { [networkKey]: _removed, ...rest } = current
-      return rest
+      const next = { ...current }
+      delete next[networkKey]
+      return next
     })
   }
 
@@ -1365,6 +1366,7 @@ export default function App() {
             nextLedgerRefreshAt={nextLedgerRefreshAt}
             onHiddenDrawUnlock={handleHiddenDrawUnlockHit}
             onCopyTicketRanges={(details) => trackEvent('copy_ticket_ranges', details)}
+            onLoadIdentitySuggestions={loadIdentitySuggestions}
             onResolveEntry={resolveTicketEntry}
             onLoadEntryIntervals={loadTicketEntryIntervals}
             onTicketSearch={(details) => trackEvent('ticket_search', details)}

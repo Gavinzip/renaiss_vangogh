@@ -1,25 +1,23 @@
 .page-rules.raffle-shell.app-shell {
   padding: 0 0 3.5rem;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(247, 251, 255, 0.92)),
-    url("../assets/van-gogh-starry-hero-bg.webp") center top / cover no-repeat;
+    linear-gradient(180deg, rgba(247, 251, 255, 0.98), rgba(255, 255, 255, 0.98));
 }
 
 .page-rules .rules-gallery-page {
+  contain: layout paint style;
   display: grid;
   width: min(calc(100% - clamp(1rem, 4vw, 4rem)), 1440px);
   margin: 1rem auto 0;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.78);
   border-radius: 28px;
-  background:
-    linear-gradient(105deg, rgba(255, 255, 255, 0.96) 0 35%, rgba(255, 255, 255, 0.72) 52%, rgba(237, 246, 255, 0.52) 100%),
-    radial-gradient(36rem 24rem at 86% 20%, rgba(216, 163, 58, 0.14), transparent 72%),
-    radial-gradient(42rem 28rem at 70% 70%, rgba(29, 110, 232, 0.13), transparent 76%);
-  box-shadow: var(--raffle-shadow);
+  background: linear-gradient(105deg, rgba(255, 255, 255, 0.97) 0 38%, rgba(241, 248, 255, 0.9) 100%);
+  box-shadow: 0 14px 46px rgba(22, 64, 122, 0.09);
 }
 
 .page-rules .rules-sbt-hero {
+  contain: layout paint style;
   position: relative;
   display: grid;
   grid-template-columns: minmax(300px, 0.86fr) minmax(0, 1.14fr);
@@ -42,8 +40,7 @@
   background:
     linear-gradient(112deg, rgba(255, 255, 255, 0) 0 45%, rgba(33, 93, 154, 0.08) 45.2% 45.6%, rgba(255, 255, 255, 0) 45.8%),
     url("../assets/van-gogh-starry-hero-bg.webp") center / cover no-repeat;
-  opacity: 0.3;
-  mix-blend-mode: multiply;
+  opacity: 0.22;
 }
 
 .page-rules .rules-sbt-hero-copy,
@@ -89,6 +86,7 @@
 }
 
 .page-rules .rules-sbt-tier-card {
+  contain: layout paint style;
   position: relative;
   display: grid;
   grid-template-columns: clamp(72px, 7vw, 92px) minmax(0, 1fr) auto;
@@ -195,14 +193,37 @@
 }
 
 .page-rules .rules-detail-section {
+  contain: layout paint style;
   width: 100%;
   margin-inline: 0;
   border: 0;
   border-top: 1px solid rgba(20, 48, 82, 0.08);
   border-radius: 0;
   background:
-    linear-gradient(180deg, rgba(249, 252, 255, 0.9), rgba(255, 255, 255, 0.96)),
-    radial-gradient(40rem 28rem at 12% 12%, rgba(216, 163, 58, 0.09), transparent 74%);
+    linear-gradient(180deg, rgba(249, 252, 255, 0.94), rgba(255, 255, 255, 0.98));
+  box-shadow: none;
+}
+
+.page-rules .rules-ticket-math-panel,
+.page-rules .rules-detail-grid {
+  content-visibility: auto;
+}
+
+.page-rules .rules-ticket-math-panel {
+  contain: layout paint style;
+  contain-intrinsic-size: auto 520px;
+  box-shadow:
+    0 16px 42px rgba(26, 46, 76, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.94);
+}
+
+.page-rules .rules-ticket-math-panel::before {
+  opacity: 0.2;
+  mix-blend-mode: normal;
+}
+
+.page-rules .rules-detail-grid {
+  contain-intrinsic-size: auto 780px;
 }
 
 .page-rules .rules-ticket-math-data {
@@ -214,6 +235,7 @@
 }
 
 .page-rules .rules-detail-card {
+  contain: layout paint style;
   border-color: rgba(255, 255, 255, 0.82);
   border-radius: 20px;
   background:

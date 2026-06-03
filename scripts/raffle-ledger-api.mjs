@@ -76,6 +76,20 @@ export function findLedgerEntry(ledger, query) {
   )
 }
 
+export function findLedgerEntryByAddresses(ledger, addresses) {
+  const normalizedAddresses = new Set(
+    (Array.isArray(addresses) ? addresses : []).map((address) => String(address || '').trim().toLowerCase()).filter(Boolean),
+  )
+  if (!normalizedAddresses.size || !Array.isArray(ledger.entries)) return null
+
+  return (
+    ledger.entries.find((entry) => {
+      const entryAddresses = [entry.userAddress, ...(Array.isArray(entry.sourceAddresses) ? entry.sourceAddresses : [])]
+      return entryAddresses.some((address) => normalizedAddresses.has(String(address || '').toLowerCase()))
+    }) || null
+  )
+}
+
 export function parseEntryIntervalQuery(searchParams) {
   const hasLimit = searchParams.has('intervalLimit')
   const includeAll = searchParams.get('intervalLimit') === 'all'
