@@ -8,7 +8,6 @@ import './styles/raffle-draw.css'
 import './styles/raffle-simulator.css'
 import './styles/raffle-polish.css'
 import renaissLogo from './assets/renaiss-logo-alpha-cropped.webp'
-import holoCardBackImage from './assets/psa-pikachu-van-gogh-back-cut-fast.webp'
 import holoCardFrontImage from './assets/psa-pikachu-van-gogh-front-cut-fast.webp'
 import liveDrawImage from './assets/van-gogh-live-source.webp'
 import heroBackgroundImage from './assets/van-gogh-starry-hero-bg.webp'
@@ -35,6 +34,7 @@ import {
   drawPrizeSlotWinners,
   drawRandomPrizeSlotWinner,
   finalizeContractLedger,
+  makeDrawStatusSerializable,
   readDrawStatus,
   requestContractDraw,
   resetContractDraft,
@@ -42,6 +42,12 @@ import {
   type ContractRevealResult,
   type DrawStatus,
 } from './lib/wallet/bsc'
+import {
+  type DrawTransactionKind,
+  type DrawTransactionRecord,
+  type DrawTransactionRecordsByNetwork,
+  type DrawVrfTimingByNetwork,
+} from './lib/wallet/drawTransactions'
 import { TOTAL_PRIZE_DRAW_SLOTS } from './lib/draw/prizeSlots'
 
 type PageKey = 'tickets' | 'rules' | 'simulator' | 'draw'
@@ -58,13 +64,31 @@ const INITIAL_LOADER_MIN_VISIBLE_MS = 1100
 const INITIAL_LOADER_EXIT_MS = 540
 const SECRET_DRAW_UNLOCK_CLICKS = 3
 const DRAW_LEDGER_URI = '/lucky-draw-ledger.json'
-const VRF_STATUS_FAST_POLL_MS = 1800
-const VRF_STATUS_SLOW_POLL_MS = 4500
-const VRF_STATUS_FAST_POLL_COUNT = 18
-const INITIAL_PRELOAD_ASSETS = [renaissLogo, heroBackgroundImage, holoCardFrontImage, holoCardBackImage]
+const VRF_STATUS_FAST_POLL_MS = 1200
+const VRF_STATUS_SLOW_POLL_MS = 3000
+const VRF_STATUS_FAST_POLL_COUNT = 30
+const INITIAL_PRELOAD_ASSETS = [renaissLogo, heroBackgroundImage, holoCardFrontImage]
+const DRAW_TX_STORAGE_KEY = 'renaiss-draw-transactions-v1'
+const EMPTY_LEDGER_HASH = `0x${'0'.repeat(64)}`
 
 const PUBLIC_NAV_ITEMS: PageKey[] = ['tickets', 'rules', 'simulator']
-type DrawBusyState = 'connect' | 'read' | 'finalize' | 'draw' | 'drawNext' | 'reset' | null
+type DrawBusyState = 'connect' | 'read' | 'reset' | 'finalize' | 'draw' | 'drawNext' | null
+
+function readStoredDrawTransactions(): DrawTransactionRecordsByNetwork {
+  if (typeof window === 'undefined') return {}
+  try {
+    const rawValue = window.localStorage.getItem(DRAW_TX_STORAGE_KEY)
+    if (!rawValue) return {}
+    const parsed = JSON.parse(rawValue) as DrawTransactionRecordsByNetwork
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function createTransactionId(kind: DrawTransactionKind): string {
+  return `${kind}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
 
 function PageHeader({
   eyebrow,
@@ -116,6 +140,30 @@ function preloadImageSource(source: string) {
   })
 }
 
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
+function draftDrawStatusFrom(status: DrawStatus): DrawStatus {
+  const prizeSlotCount = status.prizeSlotCount > 0n ? status.prizeSlotCount : BigInt(TOTAL_PRIZE_DRAW_SLOTS)
+  return makeDrawStatusSerializable({
+    ...status,
+    finalized: false,
+    requested: false,
+    fulfilled: false,
+    state: 0,
+    totalTickets: 0n,
+    firstWinningTicket: 0n,
+    ledgerHash: EMPTY_LEDGER_HASH,
+    prizeSlotCount,
+    winnerCount: 0n,
+    winnerTickets: [],
+    revealedPrizeSlots: [],
+    revealedTickets: [],
+    winnerTicketsBySlot: Array.from({ length: Number(prizeSlotCount) }, () => 0n),
+  })
+}
+
 export default function App() {
   const [ledger, setLedger] = useState<RaffleLedger | null>(null)
   const [fullLedger, setFullLedger] = useState<RaffleLedger | null>(null)
@@ -128,7 +176,8 @@ export default function App() {
   const [walletError, setWalletError] = useState('')
   const [drawRunMode, setDrawRunMode] = useState<DrawRunMode>('showcase')
   const [drawStatusByNetwork, setDrawStatusByNetwork] = useState<Partial<Record<DrawNetworkKey, DrawStatus>>>({})
-  const [drawTxHashesByNetwork, setDrawTxHashesByNetwork] = useState<Partial<Record<DrawNetworkKey, string[]>>>({})
+  const [drawTxRecordsByNetwork, setDrawTxRecordsByNetwork] = useState<DrawTransactionRecordsByNetwork>(() => readStoredDrawTransactions())
+  const [drawVrfTimingByNetwork, setDrawVrfTimingByNetwork] = useState<DrawVrfTimingByNetwork>({})
   const [drawMessage, setDrawMessage] = useState('')
   const [drawBusy, setDrawBusy] = useState<DrawBusyState>(null)
   const [walletIdentities, setWalletIdentities] = useState<WalletIdentityMap>({})
@@ -158,7 +207,8 @@ export default function App() {
   const activeWinnerTicketsBySlot = wallet ? (activeStoredDrawStatus?.winnerTicketsBySlot ?? []) : []
   const activeRevealedPrizeSlots = wallet ? (activeStoredDrawStatus?.revealedPrizeSlots ?? []) : []
   const activeDrawStatus = wallet ? activeStoredDrawStatus : null
-  const activeDrawTxHashes = drawTxHashesByNetwork[activeDrawNetworkKey] ?? []
+  const activeDrawTxRecords = drawTxRecordsByNetwork[activeDrawNetworkKey] ?? []
+  const activeDrawVrfTiming = drawVrfTimingByNetwork[activeDrawNetworkKey] ?? null
   const isActiveContractOwner = sameAddress(wallet?.address, activeDrawStatus?.ownerAddress)
   const isActiveAuthorizedOperator = activeDrawStatus
     ? Boolean(
@@ -169,6 +219,7 @@ export default function App() {
   const activeLedgerForContractCheck = currentFullLedger ?? ledger
   const isActiveContractLedgerMismatch = Boolean(
     activeDrawStatus &&
+      activeDrawStatus.finalized &&
       activeLedgerForContractCheck &&
       (activeDrawStatus.totalTickets !== BigInt(activeLedgerForContractCheck.totalFinalTickets) ||
         activeDrawStatus.prizeSlotCount !== BigInt(TOTAL_PRIZE_DRAW_SLOTS) ||
@@ -180,6 +231,14 @@ export default function App() {
     () => (drawUnlocked ? [...PUBLIC_NAV_ITEMS, 'draw'] : PUBLIC_NAV_ITEMS),
     [drawUnlocked],
   )
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(DRAW_TX_STORAGE_KEY, JSON.stringify(drawTxRecordsByNetwork))
+    } catch {
+      // Transaction links are still shown in memory if localStorage is unavailable.
+    }
+  }, [drawTxRecordsByNetwork])
 
   useEffect(() => {
     initializeAnalytics()
@@ -387,10 +446,129 @@ export default function App() {
     })
   }
 
+  function drawTransactionKindLabel(kind: DrawTransactionKind) {
+    if (kind === 'reset') return copy.walletPanel.resetRound
+    if (kind === 'finalize') return copy.walletPanel.finalizeLedger
+    if (kind === 'request') return copy.drawReveal.requestRound
+    return copy.walletPanel.drawNext
+  }
+
+  function beginDrawTransaction(networkKey: DrawNetworkKey, kind: DrawTransactionKind, detail?: string) {
+    const id = createTransactionId(kind)
+    const startedAt = Date.now()
+    const label = drawTransactionKindLabel(kind)
+    const initialRecord: DrawTransactionRecord = {
+      id,
+      networkKey,
+      kind,
+      status: 'awaiting-signature',
+      startedAt,
+      detail,
+    }
+
+    setDrawTxRecordsByNetwork((current) => ({
+      ...current,
+      [networkKey]: [initialRecord, ...(current[networkKey] ?? [])].slice(0, 24),
+    }))
+    setDrawMessage(`${label}: ${copy.walletPanel.txAwaitingSignature}`)
+
+    function updateRecord(update: Partial<DrawTransactionRecord>) {
+      setDrawTxRecordsByNetwork((current) => ({
+        ...current,
+        [networkKey]: (current[networkKey] ?? []).map((record) => (record.id === id ? { ...record, ...update } : record)),
+      }))
+    }
+
+    return {
+      id,
+      fail(error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        updateRecord({
+          error: errorMessage,
+          status: 'failed',
+        })
+        setDrawMessage(`${label}: ${copy.walletPanel.txFailed}: ${errorMessage}`)
+      },
+      submit(hash: string) {
+        updateRecord({
+          hash,
+          status: 'pending',
+          submittedAt: Date.now(),
+        })
+        setDrawMessage(`${label}: ${copy.walletPanel.txPending}: ${hash}`)
+      },
+      confirm(hash: string) {
+        updateRecord({
+          hash,
+          confirmedAt: Date.now(),
+          status: 'confirmed',
+        })
+        setDrawMessage(`${label}: ${copy.walletPanel.txConfirmed}: ${hash}`)
+      },
+      keepOnlyThisRecord() {
+        setDrawTxRecordsByNetwork((current) => ({
+          ...current,
+          [networkKey]: (current[networkKey] ?? []).filter((record) => record.id === id),
+        }))
+      },
+    }
+  }
+
+  function updateVrfTimingFromStatus(networkKey: DrawNetworkKey, nextStatus: DrawStatus) {
+    if (!nextStatus.requested) return
+    const now = Date.now()
+    setDrawVrfTimingByNetwork((current) => {
+      const existing = current[networkKey] ?? {}
+      let nextTiming = existing
+      if (nextStatus.state < 3 && !existing.pendingObservedAt && !existing.randomnessReadyAt) {
+        nextTiming = { ...nextTiming, pendingObservedAt: now }
+      }
+      if (nextStatus.state >= 3 && !existing.randomnessReadyAt) {
+        nextTiming = { ...nextTiming, randomnessReadyAt: now }
+      }
+      return nextTiming === existing ? current : { ...current, [networkKey]: nextTiming }
+    })
+  }
+
+  function markVrfRequestConfirmed(networkKey: DrawNetworkKey) {
+    const now = Date.now()
+    setDrawVrfTimingByNetwork((current) => ({
+      ...current,
+      [networkKey]: {
+        ...(current[networkKey] ?? {}),
+        pendingObservedAt: now,
+        requestConfirmedAt: now,
+        randomnessReadyAt: undefined,
+      },
+    }))
+  }
+
+  function clearVrfTiming(networkKey: DrawNetworkKey) {
+    setDrawVrfTimingByNetwork((current) => {
+      const { [networkKey]: _removed, ...rest } = current
+      return rest
+    })
+  }
+
   async function readStatusForWallet(activeWallet: ConnectedWallet, networkKey: DrawNetworkKey): Promise<DrawStatus> {
     const network = DRAW_NETWORKS[networkKey]
     const nextStatus = await readDrawStatus(activeWallet.provider, network.contractAddress, networkKey)
     setDrawStatusByNetwork((current) => ({ ...current, [networkKey]: nextStatus }))
+    updateVrfTimingFromStatus(networkKey, nextStatus)
+    return nextStatus
+  }
+
+  async function readStatusForWalletUntil(
+    activeWallet: ConnectedWallet,
+    networkKey: DrawNetworkKey,
+    predicate: (status: DrawStatus) => boolean,
+    attempts = 8,
+  ): Promise<DrawStatus> {
+    let nextStatus = await readStatusForWallet(activeWallet, networkKey)
+    for (let attempt = 1; attempt < attempts && !predicate(nextStatus); attempt += 1) {
+      await wait(700)
+      nextStatus = await readStatusForWallet(activeWallet, networkKey)
+    }
     return nextStatus
   }
 
@@ -414,6 +592,7 @@ export default function App() {
         const nextStatus = await readDrawStatus(activeWallet.provider, network.contractAddress, networkKey)
         if (cancelled) return
         setDrawStatusByNetwork((current) => ({ ...current, [networkKey]: nextStatus }))
+        updateVrfTimingFromStatus(networkKey, nextStatus)
         if (nextStatus.state >= 3 || nextStatus.fulfilled) {
           trackEvent('draw_status_read', {
             network: networkKey,
@@ -456,6 +635,38 @@ export default function App() {
     isActiveAuthorizedOperator,
     wallet,
   ])
+
+  useEffect(() => {
+    if (activePage !== 'draw') return undefined
+    if (!wallet || wallet.chainId !== activeDrawNetwork.chainId || drawBusy !== null) return undefined
+    let cancelled = false
+    const activeWallet = wallet
+
+    async function syncSelectedNetworkStatus() {
+      try {
+        const nextStatus = await readDrawStatus(activeWallet.provider, activeDrawNetwork.contractAddress, activeDrawNetworkKey)
+        if (cancelled) return
+        setDrawStatusByNetwork((current) => ({ ...current, [activeDrawNetworkKey]: nextStatus }))
+        updateVrfTimingFromStatus(activeDrawNetworkKey, nextStatus)
+      } catch {
+        if (cancelled) return
+        trackEvent('draw_status_read', {
+          network: activeDrawNetworkKey,
+          status: 'error',
+          trigger: 'auto_sync',
+        })
+      }
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void syncSelectedNetworkStatus()
+    }, 300)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timeoutId)
+    }
+  }, [activeDrawNetwork.chainId, activeDrawNetwork.contractAddress, activeDrawNetworkKey, activePage, drawBusy, wallet])
 
   async function connectBscWallet(networkKey = activeDrawNetworkKey) {
     setWalletError('')
@@ -513,9 +724,10 @@ export default function App() {
       return
     }
     setDrawBusy('read')
-    setDrawMessage('')
+    setDrawMessage(`${copy.walletPanel.read}: ${copy.common.pending}`)
     try {
       await readStatusForWallet(wallet, networkKey)
+      setDrawMessage(`${copy.walletPanel.read}: ${copy.walletPanel.statusUpdated}`)
       trackEvent('draw_status_read', {
         network: networkKey,
         status: 'success',
@@ -528,6 +740,86 @@ export default function App() {
         trigger: 'manual_refresh',
       })
       setDrawMessage(error instanceof Error ? error.message : copy.walletPanel.readFailed)
+    } finally {
+      setDrawBusy(null)
+    }
+  }
+
+  async function resetContractRound(networkKey = activeDrawNetworkKey): Promise<boolean> {
+    if (!wallet) {
+      setDrawMessage(copy.walletPanel.connectFirst)
+      trackEvent('draw_reset', {
+        network: networkKey,
+        status: 'blocked_no_wallet',
+      })
+      return false
+    }
+    const network = DRAW_NETWORKS[networkKey]
+    const currentStatus = drawStatusByNetwork[networkKey] ?? (await readStatusForWallet(wallet, networkKey))
+    if (!sameAddress(wallet.address, currentStatus.ownerAddress)) {
+      setDrawMessage(copy.walletPanel.ownerOnlyAction)
+      trackEvent('draw_reset', {
+        network: networkKey,
+        status: 'blocked_not_contract_owner',
+      })
+      return false
+    }
+    if (currentStatus.state === 2) {
+      setDrawMessage(copy.walletPanel.resetBlockedDuringRequest)
+      trackEvent('draw_reset', {
+        network: networkKey,
+        status: 'blocked_vrf_pending',
+      })
+      return false
+    }
+    if (!currentStatus.finalized && currentStatus.winnerCount === 0n) {
+      setDrawMessage(copy.walletPanel.lockLedgerFirst)
+      trackEvent('draw_reset', {
+        network: networkKey,
+        status: 'blocked_nothing_to_reset',
+      })
+      return false
+    }
+    if (!window.confirm(copy.walletPanel.resetConfirm)) {
+      trackEvent('draw_reset', {
+        network: networkKey,
+        status: 'cancelled',
+      })
+      return false
+    }
+
+    setDrawBusy('reset')
+    setDrawMessage('')
+    trackEvent('draw_reset', {
+      network: networkKey,
+      status: 'start',
+    })
+    const transaction = beginDrawTransaction(networkKey, 'reset')
+    try {
+      const hash = await resetContractDraft(wallet.provider, network.contractAddress, networkKey, transaction.submit)
+      transaction.confirm(hash)
+      transaction.keepOnlyThisRecord()
+      clearVrfTiming(networkKey)
+      const optimisticDraftStatus = draftDrawStatusFrom(currentStatus)
+      setDrawStatusByNetwork((current) => ({ ...current, [networkKey]: optimisticDraftStatus }))
+      const nextStatus = await readStatusForWalletUntil(wallet, networkKey, (status) => status.state === 0 && !status.finalized && status.winnerCount === 0n)
+      if (nextStatus.state !== 0 || nextStatus.finalized || nextStatus.winnerCount !== 0n) {
+        setDrawStatusByNetwork((current) => ({ ...current, [networkKey]: optimisticDraftStatus }))
+      }
+      setDrawMessage(`${copy.walletPanel.resetSent}: ${hash}`)
+      trackEvent('draw_reset', {
+        network: networkKey,
+        status: 'success',
+      })
+      return true
+    } catch (error) {
+      transaction.fail(error)
+      trackEvent('draw_reset', {
+        network: networkKey,
+        status: 'error',
+      })
+      setDrawMessage(error instanceof Error ? error.message : copy.walletPanel.resetFailed)
+      return false
     } finally {
       setDrawBusy(null)
     }
@@ -561,6 +853,7 @@ export default function App() {
       })
       return
     }
+    const ledgerHashForDraw = ledgerForDraw.ledgerHash
     if (currentStatus?.requested) {
       setDrawMessage(copy.walletPanel.finalizeBlockedAfterRequest)
       trackEvent('draw_finalize', {
@@ -575,86 +868,40 @@ export default function App() {
       network: networkKey,
       status: 'start',
     })
+    const transaction = beginDrawTransaction(networkKey, 'finalize')
     try {
       const hash = await finalizeContractLedger(
         wallet.provider,
         network.contractAddress,
         networkKey,
-        ledgerForDraw.ledgerHash,
+        ledgerHashForDraw,
         ledgerForDraw.totalFinalTickets,
         TOTAL_PRIZE_DRAW_SLOTS,
         DRAW_LEDGER_URI,
+        transaction.submit,
       )
-      setDrawTxHashesByNetwork((current) => ({ ...current, [networkKey]: [hash, ...(current[networkKey] ?? [])] }))
+      transaction.confirm(hash)
+      await readStatusForWalletUntil(
+        wallet,
+        networkKey,
+        (status) =>
+          status.finalized &&
+          status.totalTickets === BigInt(ledgerForDraw.totalFinalTickets) &&
+          status.prizeSlotCount === BigInt(TOTAL_PRIZE_DRAW_SLOTS) &&
+          status.ledgerHash.toLowerCase() === ledgerHashForDraw.toLowerCase(),
+      )
       setDrawMessage(`${copy.walletPanel.finalizeSent}: ${hash}`)
-      await readStatusForWallet(wallet, networkKey)
       trackEvent('draw_finalize', {
         network: networkKey,
         status: 'success',
       })
     } catch (error) {
+      transaction.fail(error)
       trackEvent('draw_finalize', {
         network: networkKey,
         status: 'error',
       })
       setDrawMessage(error instanceof Error ? error.message : copy.walletPanel.finalizeFailed)
-    } finally {
-      setDrawBusy(null)
-    }
-  }
-
-  async function resetContractRound(networkKey = activeDrawNetworkKey) {
-    if (!wallet) {
-      setDrawMessage(copy.walletPanel.connectFirst)
-      trackEvent('draw_reset', {
-        network: networkKey,
-        status: 'blocked_no_wallet',
-      })
-      return
-    }
-
-    const network = DRAW_NETWORKS[networkKey]
-    setDrawBusy('reset')
-    setDrawMessage('')
-    trackEvent('draw_reset', {
-      network: networkKey,
-      status: 'start',
-    })
-
-    try {
-      const currentStatus = drawStatusByNetwork[networkKey] ?? (await readStatusForWallet(wallet, networkKey))
-      if (!sameAddress(wallet.address, currentStatus.ownerAddress)) {
-        setDrawMessage(copy.walletPanel.ownerOnlyAction)
-        trackEvent('draw_reset', {
-          network: networkKey,
-          status: 'blocked_not_contract_owner',
-        })
-        return
-      }
-
-      if (currentStatus.state === 2) {
-        setDrawMessage(copy.walletPanel.resetBlockedDuringRequest)
-        trackEvent('draw_reset', {
-          network: networkKey,
-          status: 'blocked_randomness_requested',
-        })
-        return
-      }
-
-      const hash = await resetContractDraft(wallet.provider, network.contractAddress, networkKey)
-      setDrawTxHashesByNetwork((current) => ({ ...current, [networkKey]: [hash, ...(current[networkKey] ?? [])] }))
-      setDrawMessage(`${copy.walletPanel.resetSent}: ${hash}`)
-      await readStatusForWallet(wallet, networkKey)
-      trackEvent('draw_reset', {
-        network: networkKey,
-        status: 'success',
-      })
-    } catch (error) {
-      trackEvent('draw_reset', {
-        network: networkKey,
-        status: 'error',
-      })
-      setDrawMessage(error instanceof Error ? error.message : copy.walletPanel.resetFailed)
     } finally {
       setDrawBusy(null)
     }
@@ -695,22 +942,33 @@ export default function App() {
       })
       return
     }
+    if (currentStatus.vrfSubscriptionError) {
+      setDrawMessage(currentStatus.vrfSubscriptionError)
+      trackEvent('draw_request', {
+        network: networkKey,
+        status: 'blocked_vrf_config_error',
+      })
+      return
+    }
     setDrawBusy('draw')
     setDrawMessage('')
     trackEvent('draw_request', {
       network: networkKey,
       status: 'start',
     })
+    const transaction = beginDrawTransaction(networkKey, 'request')
     try {
-      const hash = await requestContractDraw(wallet.provider, network.contractAddress, networkKey)
-      setDrawTxHashesByNetwork((current) => ({ ...current, [networkKey]: [hash, ...(current[networkKey] ?? [])] }))
+      const hash = await requestContractDraw(wallet.provider, network.contractAddress, networkKey, transaction.submit)
+      transaction.confirm(hash)
+      markVrfRequestConfirmed(networkKey)
+      await readStatusForWalletUntil(wallet, networkKey, (status) => status.requested)
       setDrawMessage(`${copy.walletPanel.drawSent}: ${hash}`)
-      await readStatusForWallet(wallet, networkKey)
       trackEvent('draw_request', {
         network: networkKey,
         status: 'success',
       })
     } catch (error) {
+      transaction.fail(error)
       trackEvent('draw_request', {
         network: networkKey,
         status: 'error',
@@ -756,6 +1014,16 @@ export default function App() {
       return []
     }
     const currentStatus = drawStatusByNetwork[networkKey] ?? (await readStatusForWallet(wallet, networkKey))
+    if (currentStatus?.vrfSubscriptionError) {
+      setDrawMessage(currentStatus.vrfSubscriptionError)
+      trackEvent('draw_next', {
+        network: networkKey,
+        requested_count: prizeSlotIndexes.length,
+        prize_slot_indexes: prizeSlotIndexes.join(','),
+        status: 'blocked_vrf_config_error',
+      })
+      return []
+    }
     if (!currentStatus?.requested) {
       setDrawMessage(copy.walletPanel.requestVrfFirst)
       trackEvent('draw_next', {
@@ -818,16 +1086,21 @@ export default function App() {
       prize_slot_indexes: safePrizeSlotIndexes.join(','),
       status: 'start',
     })
+    const transaction = beginDrawTransaction(networkKey, 'reveal', safePrizeSlotIndexes.map((slotIndex) => `#${slotIndex + 1}`).join(', '))
     try {
       const hash = currentStatus.supportsSelectablePrizeSlots
         ? safePrizeSlotIndexes.length === 1
-          ? await drawPrizeSlotWinner(wallet.provider, network.contractAddress, networkKey, safePrizeSlotIndexes[0])
-          : await drawPrizeSlotWinners(wallet.provider, network.contractAddress, networkKey, safePrizeSlotIndexes)
+          ? await drawPrizeSlotWinner(wallet.provider, network.contractAddress, networkKey, safePrizeSlotIndexes[0], transaction.submit)
+          : await drawPrizeSlotWinners(wallet.provider, network.contractAddress, networkKey, safePrizeSlotIndexes, transaction.submit)
         : safePrizeSlotIndexes.length === 1
-          ? await drawNextWinner(wallet.provider, network.contractAddress, networkKey)
-          : await drawBatchWinners(wallet.provider, network.contractAddress, networkKey, safePrizeSlotIndexes.length)
-      setDrawTxHashesByNetwork((current) => ({ ...current, [networkKey]: [hash, ...(current[networkKey] ?? [])] }))
-      const nextStatus = await readStatusForWallet(wallet, networkKey)
+          ? await drawNextWinner(wallet.provider, network.contractAddress, networkKey, transaction.submit)
+          : await drawBatchWinners(wallet.provider, network.contractAddress, networkKey, safePrizeSlotIndexes.length, transaction.submit)
+      transaction.confirm(hash)
+      const nextStatus = await readStatusForWalletUntil(
+        wallet,
+        networkKey,
+        (status) => status.revealedPrizeSlots.length > previousRevealCount || status.fulfilled,
+      )
       const revealedResults = revealResultsFromStatus(nextStatus, previousRevealCount)
       setDrawMessage(`${copy.walletPanel.drawNextSent}: ${hash}`)
       trackEvent('draw_next', {
@@ -839,6 +1112,7 @@ export default function App() {
       })
       return revealedResults
     } catch (error) {
+      transaction.fail(error)
       trackEvent('draw_next', {
         network: networkKey,
         requested_count: safePrizeSlotIndexes.length,
@@ -876,6 +1150,15 @@ export default function App() {
     }
 
     const currentStatus = drawStatusByNetwork[networkKey] ?? (await readStatusForWallet(wallet, networkKey))
+    if (currentStatus?.vrfSubscriptionError) {
+      setDrawMessage(currentStatus.vrfSubscriptionError)
+      trackEvent('draw_next', {
+        network: networkKey,
+        random_prize_slot: true,
+        status: 'blocked_vrf_config_error',
+      })
+      return []
+    }
     if (!currentStatus?.requested) {
       setDrawMessage(copy.walletPanel.requestVrfFirst)
       trackEvent('draw_next', {
@@ -912,10 +1195,15 @@ export default function App() {
       random_prize_slot: true,
       status: 'start',
     })
+    const transaction = beginDrawTransaction(networkKey, 'reveal', copy.drawReveal.randomPrizeSlot)
     try {
-      const hash = await drawRandomPrizeSlotWinner(wallet.provider, network.contractAddress, networkKey)
-      setDrawTxHashesByNetwork((current) => ({ ...current, [networkKey]: [hash, ...(current[networkKey] ?? [])] }))
-      const nextStatus = await readStatusForWallet(wallet, networkKey)
+      const hash = await drawRandomPrizeSlotWinner(wallet.provider, network.contractAddress, networkKey, transaction.submit)
+      transaction.confirm(hash)
+      const nextStatus = await readStatusForWalletUntil(
+        wallet,
+        networkKey,
+        (status) => status.revealedPrizeSlots.length > previousRevealCount || status.fulfilled,
+      )
       const revealedResults = revealResultsFromStatus(nextStatus, previousRevealCount)
       setDrawMessage(`${copy.walletPanel.drawNextSent}: ${hash}`)
       trackEvent('draw_next', {
@@ -926,6 +1214,7 @@ export default function App() {
       })
       return revealedResults
     } catch (error) {
+      transaction.fail(error)
       trackEvent('draw_next', {
         network: networkKey,
         random_prize_slot: true,
@@ -1105,6 +1394,9 @@ export default function App() {
               <DrawReveal
                 runMode={drawRunMode}
                 onRunModeChange={handleDrawRunModeChange}
+                network={activeDrawNetwork}
+                walletAddress={wallet?.address ?? null}
+                authorizedOperatorAddress={activeDrawStatus?.drawOperatorAddress ?? activeDrawNetwork.authorizedOperatorAddress}
                 winnerTicketsBySlot={activeWinnerTicketsBySlot}
                 revealedPrizeSlots={activeRevealedPrizeSlots}
                 totalTickets={currentFullLedger.totalFinalTickets}
@@ -1113,30 +1405,32 @@ export default function App() {
                 copy={copy}
                 drawStatus={activeDrawStatus}
                 hasWallet={Boolean(wallet && isActiveAuthorizedOperator)}
-                isContractBusy={drawBusy === 'finalize' || drawBusy === 'draw' || drawBusy === 'drawNext' || drawBusy === 'reset'}
+                isContractBusy={drawBusy === 'reset' || drawBusy === 'finalize' || drawBusy === 'draw' || drawBusy === 'drawNext'}
                 isContractLedgerMismatch={isActiveContractLedgerMismatch}
+                canResetRound={Boolean(isActiveContractOwner && activeDrawStatus && activeDrawStatus.state !== 2 && (activeDrawStatus.finalized || activeDrawStatus.winnerCount > 0n))}
+                operatorMessage={drawMessage}
                 onConnectWallet={() => connectBscWallet(activeDrawNetworkKey)}
+                onResetRound={() => resetContractRound(activeDrawNetworkKey)}
+                onFinalizeLedger={() => lockLedgerRound(activeDrawNetworkKey)}
+                onRefreshStatus={() => refreshDrawStatus(activeDrawNetworkKey)}
                 onRequestDraw={() => requestDrawRound(activeDrawNetworkKey)}
                 onDrawContractPrizeSlots={(prizeSlotIndexes) => drawContractPrizeSlots(prizeSlotIndexes, activeDrawNetworkKey)}
                 onDrawRandomContractPrizeSlot={() => drawRandomContractPrizeSlot(activeDrawNetworkKey)}
+                transactionRecords={activeDrawTxRecords}
+                vrfTiming={activeDrawVrfTiming}
               />
               <WalletPanel
                 network={activeDrawNetwork}
                 wallet={wallet}
                 status={activeDrawStatus}
                 message={drawMessage}
-                busy={drawBusy}
                 ledgerTotalTickets={currentFullLedger.totalFinalTickets}
                 ledgerHash={currentFullLedger.ledgerHash}
                 prizeSlotCount={TOTAL_PRIZE_DRAW_SLOTS}
-                transactionHashes={activeDrawTxHashes}
+                transactionRecords={activeDrawTxRecords}
                 authorizedOperatorAddress={activeDrawStatus?.drawOperatorAddress ?? activeDrawNetwork.authorizedOperatorAddress}
                 isAuthorizedOperator={isActiveAuthorizedOperator}
                 isContractOwner={isActiveContractOwner}
-                onConnectWallet={() => connectBscWallet(activeDrawNetworkKey)}
-                onRefreshStatus={() => refreshDrawStatus(activeDrawNetworkKey)}
-                onFinalizeLedger={() => lockLedgerRound(activeDrawNetworkKey)}
-                onResetRound={() => resetContractRound(activeDrawNetworkKey)}
                 copy={copy}
               />
               <ContractDetails ledger={currentFullLedger} network={activeDrawNetwork} copy={copy} />

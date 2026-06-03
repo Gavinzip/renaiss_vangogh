@@ -1,6 +1,7 @@
 import type { RaffleEntry, RaffleLedger, TicketInterval } from './types'
 import type { WalletIdentityMap } from './identities'
 import { shortenAddress } from './identities'
+import { formatDrawTicketNumber } from './display'
 
 const MAX_SAMPLE_TICKETS = 10
 const MAX_VISIBLE_CANDIDATES = 12
@@ -38,14 +39,14 @@ function identityName(entry: RaffleEntry, identities: WalletIdentityMap): string
 }
 
 function candidateRange(winnerTicket: bigint, revealedDigitCount: number, totalTickets: number) {
-  const ticketNumber = winnerTicket.toString()
+  const ticketNumber = formatDrawTicketNumber(winnerTicket, totalTickets)
   const prefix = ticketNumber.slice(0, revealedDigitCount)
   if (!prefix) return null
 
   const remainingDigits = ticketNumber.length - prefix.length
   const scale = 10 ** remainingDigits
-  const rangeStart = Number(prefix) * scale
-  const rangeEnd = Math.min(rangeStart + scale - 1, totalTickets)
+  const rangeStart = Math.max(1, Number(prefix) * scale)
+  const rangeEnd = Math.min(Number(prefix) * scale + scale - 1, totalTickets)
 
   if (!Number.isSafeInteger(rangeStart) || rangeStart < 1 || rangeStart > totalTickets || rangeEnd < rangeStart) {
     return null
@@ -122,7 +123,7 @@ export function findWinnerCandidate({
 }): WinnerCandidate | null {
   const snapshot = buildWinnerCandidateSnapshot({
     winnerTicket,
-    revealedDigitCount: winnerTicket.toString().length,
+    revealedDigitCount: formatDrawTicketNumber(winnerTicket, ledger.totalFinalTickets).length,
     ledger,
     identities,
   })

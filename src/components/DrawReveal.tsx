@@ -12,13 +12,16 @@ import {
   type PrizeDrawMode,
   type PrizeGroupId,
 } from '../lib/draw/prizeSlots'
-import { isDrawNetworkKey, type DrawRunMode } from '../lib/contracts/luckyDrawNetworks'
+import { isDrawNetworkKey, type DrawNetworkConfig, type DrawRunMode } from '../lib/contracts/luckyDrawNetworks'
 import type { AppCopy } from '../lib/i18n'
-import { compactNumber } from '../lib/ticketing/display'
+import { compactNumber, formatDrawTicketNumber } from '../lib/ticketing/display'
 import type { WalletIdentityMap } from '../lib/ticketing/identities'
+import { formatAddress } from '../lib/ticketing/rules'
 import type { RaffleLedger } from '../lib/ticketing/types'
 import { buildWinnerCandidateSnapshot, findWinnerCandidate, type WinnerCandidate } from '../lib/ticketing/winnerCandidates'
 import type { ContractRevealResult, DrawStatus } from '../lib/wallet/bsc'
+import { formatDurationMs, transactionDuration, type DrawTransactionRecord, type DrawVrfTiming } from '../lib/wallet/drawTransactions'
+import { formatVrfPaymentBalance, hasInsufficientVrfFunding } from '../lib/wallet/vrfSubscription'
 
 const DRAW_ANIMATION_SRC = '/draw-animation.mp4'
 
@@ -60,6 +63,11 @@ function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
 
+function isMediaPlaybackBlocked(error: unknown) {
+  if (!(error instanceof Error)) return false
+  return error.name === 'NotAllowedError' || /notallowed|permission|user gesture|user activation/i.test(error.message)
+}
+
 function buildWinnerResult({
   identities,
   ledger,
@@ -88,6 +96,9 @@ function buildWinnerResult({
 export function DrawReveal({
   runMode,
   onRunModeChange,
+  network,
+  walletAddress,
+  authorizedOperatorAddress,
   winnerTicketsBySlot,
   revealedPrizeSlots,
   totalTickets,
@@ -98,13 +109,23 @@ export function DrawReveal({
   hasWallet,
   isContractBusy,
   isContractLedgerMismatch,
+  canResetRound,
+  operatorMessage,
   onConnectWallet,
+  onResetRound,
+  onFinalizeLedger,
+  onRefreshStatus,
   onRequestDraw,
   onDrawContractPrizeSlots,
   onDrawRandomContractPrizeSlot,
+  transactionRecords,
+  vrfTiming,
 }: {
   runMode: DrawRunMode
   onRunModeChange: (mode: DrawRunMode) => void
+  network: DrawNetworkConfig
+  walletAddress: string | null
+  authorizedOperatorAddress: string
   winnerTicketsBySlot: bigint[]
   revealedPrizeSlots: bigint[]
   totalTickets: number
@@ -115,10 +136,17 @@ export function DrawReveal({
   hasWallet: boolean
   isContractBusy: boolean
   isContractLedgerMismatch: boolean
+  canResetRound: boolean
+  operatorMessage: string
   onConnectWallet: () => void
+  onResetRound: () => Promise<boolean>
+  onFinalizeLedger: () => Promise<void>
+  onRefreshStatus: () => Promise<void>
   onRequestDraw: () => Promise<void>
   onDrawContractPrizeSlots: (prizeSlotIndexes: number[]) => Promise<ContractRevealResult[]>
   onDrawRandomContractPrizeSlot: () => Promise<ContractRevealResult[]>
+  transactionRecords: DrawTransactionRecord[]
+  vrfTiming: DrawVrfTiming | null
 }) {
   const [phase, setPhase] = useState<'idle' | 'video' | 'reveal'>('idle')
   const [digitRevealState, setDigitRevealState] = useState({ ticketNumber: '', count: 0 })
@@ -130,9 +158,12 @@ export function DrawReveal({
   const [currentReveal, setCurrentReveal] = useState<DrawWinnerResult | null>(null)
   const [isSequenceRunning, setIsSequenceRunning] = useState(false)
   const [sequenceMessage, setSequenceMessage] = useState('')
+  const [videoReady, setVideoReady] = useState(false)
+  const [videoLoadError, setVideoLoadError] = useState(false)
+  const [clockNow, setClockNow] = useState(0)
   const rootRef = useRef<HTMLElement | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  const revealTimerRef = useRef<number | null>(null)
+  const videoPlaybackCancelRef = useRef<(() => void) | null>(null)
   const sequenceLockRef = useRef(false)
   const previousRevealedDigitCountRef = useRef(0)
 
@@ -200,14 +231,15 @@ export function DrawReveal({
   const selectedBatchDrawCount = Math.min(Math.max(1, batchRevealCount), Math.max(1, selectedRemainingSlotCount))
   const selectedDrawCount = effectiveDrawMode === 'batch' ? selectedBatchDrawCount : Math.min(1, selectedRemainingSlotCount)
   const selectedGroupResults = visibleResults.filter((result) => result.prizeGroupId === activePrizeGroupId)
-  const selectedExistingRevealResults = effectiveDrawMode === 'batch' ? selectedGroupResults : selectedGroupResults.slice(0, 1)
+  const selectedExistingRevealResults = effectiveDrawMode === 'batch' ? selectedGroupResults : selectedGroupResults.slice(-1)
   const canRevealExistingSelection = !isLiveRunMode && selectedRemainingSlots.length === 0 && selectedExistingRevealResults.length > 0
   const selectedRunCount = canRevealExistingSelection ? selectedExistingRevealResults.length : selectedDrawCount
-  const storedSelectedReveal = selectedGroupResults[0] ?? visibleResults[visibleResults.length - 1] ?? null
-  const activeCurrentReveal = isLiveRunMode && !isSequenceRunning ? null : currentReveal
+  const storedSelectedReveal = selectedGroupResults[selectedGroupResults.length - 1] ?? visibleResults[visibleResults.length - 1] ?? null
+  const activeCurrentReveal = currentReveal
   const activeReveal = activeCurrentReveal ?? storedSelectedReveal
   const winnerTicket = activeReveal?.ticket ?? null
-  const ticketNumber = winnerTicket ?? ''
+  const rawTicketNumber = winnerTicket ?? ''
+  const ticketNumber = winnerTicket ? formatDrawTicketNumber(winnerTicket, totalTickets) : ''
   const ticketAriaLabel = winnerTicket ? `#${ticketNumber}` : copy.drawReveal.readyState
   const ticketDigits = [...ticketNumber]
   const hasTicketNumber = winnerTicket !== null
@@ -215,7 +247,7 @@ export function DrawReveal({
   const isRevealComplete = !hasTicketNumber || revealedDigitCount >= ticketDigits.length
   const isAllComplete = visibleResults.length >= TOTAL_PRIZE_DRAW_SLOTS
   const candidateSnapshot = buildWinnerCandidateSnapshot({
-    winnerTicket: ticketNumber ? BigInt(ticketNumber) : null,
+    winnerTicket: rawTicketNumber ? BigInt(rawTicketNumber) : null,
     revealedDigitCount,
     ledger,
     identities: walletIdentities,
@@ -234,9 +266,16 @@ export function DrawReveal({
   const statusCopy = resultSource === 'demo' ? copy.drawReveal.demoNotice : resultSource === 'contract' ? copy.drawReveal.verified : copy.drawReveal.readyCopy
   const shouldConnectBeforeRun = isLiveRunMode && !hasWallet
   const isWaitingForContractRandomness = Boolean(isLiveRunMode && drawStatus?.requested && drawStatus.state < 3 && !drawStatus.fulfilled)
+  const isIntroVideoBlocked = !videoReady || videoLoadError
+  const introVideoMessage = videoLoadError ? copy.drawReveal.videoUnavailable : copy.drawReveal.videoLoading
+  const vrfSubscription = drawStatus?.vrfSubscription ?? null
+  const hasVrfFundingIssue = hasInsufficientVrfFunding(vrfSubscription)
+  const vrfFundingWarning = hasVrfFundingIssue ? copy.walletPanel.vrfFundingMissing : ''
+  const vrfConfigWarning = isLiveRunMode ? drawStatus?.vrfSubscriptionError || '' : ''
   const canUseRandomPrizeSlot = Boolean(
     isLiveRunMode &&
       hasWallet &&
+      !vrfConfigWarning &&
       drawStatus?.supportsSelectablePrizeSlots &&
       drawStatus.finalized &&
       drawStatus.requested &&
@@ -245,22 +284,45 @@ export function DrawReveal({
       !isAllComplete &&
       !isContractLedgerMismatch,
   )
+  const livePrimaryActionIsSetup = Boolean(
+    isLiveRunMode &&
+      hasWallet &&
+      (!drawStatus || !drawStatus.finalized || !drawStatus.requested || (drawStatus.requested && drawStatus.state < 3)),
+  )
+  const primaryRunWouldRevealTicket = Boolean(
+    !shouldConnectBeforeRun &&
+      (canRevealExistingSelection ||
+        (!isLiveRunMode && selectedRemainingSlots.length > 0) ||
+        (isLiveRunMode &&
+          drawStatus?.finalized &&
+          drawStatus.requested &&
+          drawStatus.state >= 3 &&
+          !drawStatus.fulfilled &&
+          !isAllComplete &&
+          !isContractLedgerMismatch &&
+          selectedRemainingSlots.length > 0)),
+  )
   const isRunDisabled =
     isSequenceRunning ||
     isContractBusy ||
     isWaitingForContractRandomness ||
+    (primaryRunWouldRevealTicket && isIntroVideoBlocked) ||
+    Boolean(vrfConfigWarning) ||
+    Boolean(isLiveRunMode && hasVrfFundingIssue && drawStatus?.finalized && !drawStatus.requested) ||
     (isLiveRunMode && isAllComplete) ||
     (isLiveRunMode && isContractLedgerMismatch) ||
-    (!shouldConnectBeforeRun && !canRevealExistingSelection && selectedRemainingSlots.length === 0)
-  const livePrimaryRunLabel = !drawStatus?.finalized
-    ? copy.drawReveal.lockLedgerFirst
-    : !drawStatus.requested
-      ? copy.drawReveal.startContractDraw
-      : drawStatus.state < 3
-        ? copy.drawReveal.waitingForRandomnessAction
-        : drawStatus.fulfilled || isAllComplete
-          ? copy.drawReveal.allWinnersRevealed
-          : copy.drawReveal.startContractDraw
+    (!livePrimaryActionIsSetup && !shouldConnectBeforeRun && !canRevealExistingSelection && selectedRemainingSlots.length === 0)
+  const livePrimaryRunLabel = !drawStatus
+    ? copy.walletPanel.read
+    : !drawStatus.finalized
+      ? copy.walletPanel.finalizeLedger
+      : !drawStatus.requested
+        ? copy.drawReveal.requestRound
+        : drawStatus.state < 3
+          ? copy.drawReveal.waitingForRandomnessAction
+          : drawStatus.fulfilled || isAllComplete
+            ? copy.drawReveal.allWinnersRevealed
+            : copy.drawReveal.startContractDraw
   const liveContractStatus = !drawStatus
     ? copy.common.pending
     : !drawStatus.finalized
@@ -277,6 +339,36 @@ export function DrawReveal({
     : isLiveRunMode
       ? livePrimaryRunLabel
       : copy.drawReveal.startShowcaseDraw
+  const explorerBaseUrl = network.blockExplorerUrls[0]?.replace(/\/$/, '') ?? ''
+  const latestTransactionRecords = transactionRecords.slice(0, 4)
+  const vrfWaitStartedAt = vrfTiming?.requestConfirmedAt ?? vrfTiming?.pendingObservedAt
+  const vrfWaitEndAt = vrfTiming?.randomnessReadyAt ?? clockNow
+  const vrfWaitDuration = vrfWaitStartedAt
+    ? formatDurationMs(vrfWaitEndAt ? vrfWaitEndAt - vrfWaitStartedAt : undefined)
+    : '-'
+  const vrfBalanceLabel = formatVrfPaymentBalance(vrfSubscription)
+  const vrfSubscriptionMeta = vrfSubscription
+    ? `${copy.walletPanel.vrfPendingRequest}: ${
+        vrfSubscription.pendingRequestExists ? copy.walletPanel.requested : copy.walletPanel.ready
+      }`
+    : drawStatus?.vrfSubscriptionError
+      ? copy.walletPanel.vrfSubscriptionReadFailed
+      : '-'
+  const resetOrTransactionMessage = operatorMessage || sequenceMessage
+
+  function transactionKindLabel(record: DrawTransactionRecord) {
+    if (record.kind === 'reset') return copy.walletPanel.resetRound
+    if (record.kind === 'finalize') return copy.walletPanel.finalizeLedger
+    if (record.kind === 'request') return copy.drawReveal.requestRound
+    return copy.walletPanel.drawNext
+  }
+
+  function transactionStatusLabel(record: DrawTransactionRecord) {
+    if (record.status === 'awaiting-signature') return copy.walletPanel.txAwaitingSignature
+    if (record.status === 'pending') return copy.walletPanel.txPending
+    if (record.status === 'confirmed') return copy.walletPanel.txConfirmed
+    return copy.walletPanel.txFailed
+  }
 
   function candidateStrengthStyle(matchingTickets: number): CSSProperties {
     const strength = Math.max(8, Math.round((matchingTickets / maxCandidateTickets) * 100))
@@ -316,80 +408,119 @@ export function DrawReveal({
     })
   }, [])
 
-  const clearRevealTimer = useCallback(() => {
-    if (revealTimerRef.current === null) return
-    window.clearTimeout(revealTimerRef.current)
-    revealTimerRef.current = null
+  const cancelVideoPlaybackWait = useCallback(() => {
+    videoPlaybackCancelRef.current?.()
+    videoPlaybackCancelRef.current = null
   }, [])
-
-  const finishVideo = useCallback(() => {
-    clearRevealTimer()
-    setPhase('reveal')
-    centerRevealStage()
-  }, [centerRevealStage, clearRevealTimer])
-
-  const scheduleVideoFinish = useCallback(
-    (video: HTMLVideoElement) => {
-      clearRevealTimer()
-      const durationMs = Number.isFinite(video.duration) && video.duration > 0 ? video.duration * 1000 : 8000
-      const remainingMs = Math.max(300, durationMs - video.currentTime * 1000 + 180)
-      revealTimerRef.current = window.setTimeout(finishVideo, remainingMs)
-    },
-    [clearRevealTimer, finishVideo],
-  )
-
-  const startVideo = useCallback(async (): Promise<boolean> => {
-    const video = videoRef.current
-    if (!video) return false
-    try {
-      await video.play()
-      scheduleVideoFinish(video)
-      return true
-    } catch {
-      clearRevealTimer()
-      return false
-    }
-  }, [clearRevealTimer, scheduleVideoFinish])
 
   async function playVideoClip() {
     const video = videoRef.current
-    clearRevealTimer()
+    if (!video || isIntroVideoBlocked) {
+      setSequenceMessage(introVideoMessage)
+      return false
+    }
+
+    cancelVideoPlaybackWait()
     setPhase('video')
     centerRevealStage()
 
-    if (!video) {
-      await wait(900)
-      finishVideo()
+    const playbackVideo = video
+    playbackVideo.pause()
+    playbackVideo.muted = false
+    playbackVideo.volume = 1
+    playbackVideo.currentTime = 0
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        let settled = false
+
+        function cleanupListeners() {
+          playbackVideo.removeEventListener('ended', handleEnded)
+          playbackVideo.removeEventListener('error', handleError)
+          if (videoPlaybackCancelRef.current === cancelPlayback) {
+            videoPlaybackCancelRef.current = null
+          }
+        }
+
+        function settle(callback: () => void) {
+          if (settled) return
+          settled = true
+          cleanupListeners()
+          callback()
+        }
+
+        function handleEnded() {
+          settle(resolve)
+        }
+
+        function handleError() {
+          settle(() => reject(new Error('draw animation failed')))
+        }
+
+        function cancelPlayback() {
+          settle(() => reject(new Error('draw animation cancelled')))
+        }
+
+        videoPlaybackCancelRef.current = cancelPlayback
+        playbackVideo.addEventListener('ended', handleEnded, { once: true })
+        playbackVideo.addEventListener('error', handleError, { once: true })
+        void playbackVideo.play().catch((error: unknown) => {
+          settle(() => reject(error instanceof Error ? error : new Error('draw animation failed')))
+        })
+      })
+      videoPlaybackCancelRef.current = null
+      return true
+    } catch (error) {
+      videoPlaybackCancelRef.current = null
+      if (error instanceof Error && error.message === 'draw animation cancelled') return false
+      if (isMediaPlaybackBlocked(error)) {
+        setSequenceMessage(copy.drawReveal.videoPlaybackBlocked)
+      } else {
+        setVideoLoadError(true)
+        setVideoReady(false)
+        setSequenceMessage(copy.drawReveal.videoUnavailable)
+      }
+      setPhase(hasTicketNumber ? 'reveal' : 'idle')
+      return false
+    }
+  }
+
+  function updateVideoReadiness(video: HTMLVideoElement) {
+    if (video.error) {
+      setVideoLoadError(true)
+      setVideoReady(false)
       return
     }
 
-    video.currentTime = 0
-    await new Promise<void>((resolve) => {
-      let settled = false
-      const finish = () => {
-        if (settled) return
-        settled = true
-        video.removeEventListener('ended', finish)
-        window.clearTimeout(timeoutId)
-        finishVideo()
-        resolve()
-      }
-      const timeoutId = window.setTimeout(finish, 9000)
-      video.addEventListener('ended', finish, { once: true })
-      void video.play().then(
-        () => undefined,
-        () => {
-          window.setTimeout(finish, 520)
-        },
-      )
-    })
+    if (video.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA) {
+      setVideoLoadError(false)
+      setVideoReady(true)
+    }
   }
 
-  async function revealTicketDigits(result: DrawWinnerResult) {
-    const number = result.ticket.toString()
+  function markVideoLoadError() {
+    cancelVideoPlaybackWait()
+    setVideoLoadError(true)
+    setVideoReady(false)
+    setSequenceMessage(copy.drawReveal.videoUnavailable)
+    setPhase(hasTicketNumber ? 'reveal' : 'idle')
+  }
+
+  function guardIntroVideoReady() {
+    if (!isIntroVideoBlocked) return true
+    setSequenceMessage(introVideoMessage)
+    return false
+  }
+
+  function primeRevealResult(result: DrawWinnerResult) {
+    const number = formatDrawTicketNumber(result.ticket, totalTickets)
     previousRevealedDigitCountRef.current = 0
     setCurrentReveal(result)
     setDigitRevealState({ ticketNumber: number, count: 0 })
+  }
+
+  async function revealTicketDigits(result: DrawWinnerResult) {
+    primeRevealResult(result)
     setPhase('reveal')
     centerRevealStage()
   }
@@ -398,9 +529,11 @@ export function DrawReveal({
     for (let index = 0; index < results.length; index += 1) {
       const result = results[index]
       if (index === 0 && playIntro) {
-        setCurrentReveal(result)
-        setDigitRevealState({ ticketNumber: result.ticket.toString(), count: 0 })
-        await playVideoClip()
+        const didPlayVideo = await playVideoClip()
+        if (!didPlayVideo && result.source === 'contract') {
+          await revealTicketDigits(result)
+        }
+        if (!didPlayVideo) return false
       }
       await revealTicketDigits(result)
       if (result.source === 'demo') {
@@ -411,6 +544,7 @@ export function DrawReveal({
       }
       await wait(index === results.length - 1 ? 760 : 240)
     }
+    return true
   }
 
   function targetDemoResults() {
@@ -438,6 +572,40 @@ export function DrawReveal({
 
     if (isLiveRunMode && isContractLedgerMismatch) {
       setSequenceMessage(copy.walletPanel.contractTotalMismatch)
+      return
+    }
+
+    if (isLiveRunMode && (!drawStatus || !drawStatus.finalized || !drawStatus.requested || drawStatus.state < 3)) {
+      sequenceLockRef.current = true
+      setIsSequenceRunning(true)
+      try {
+        if (!drawStatus) {
+          setSequenceMessage(copy.walletPanel.read)
+          await onRefreshStatus()
+          return
+        }
+
+        if (!drawStatus.finalized) {
+          setSequenceMessage(copy.drawReveal.lockLedgerFirst)
+          await onFinalizeLedger()
+          return
+        }
+
+        if (!drawStatus.requested) {
+          setSequenceMessage(copy.drawReveal.requestVrfFirst)
+          await onRequestDraw()
+          return
+        }
+
+        setSequenceMessage(copy.drawReveal.waitingForVrf)
+        return
+      } finally {
+        sequenceLockRef.current = false
+        setIsSequenceRunning(false)
+      }
+    }
+
+    if (primaryRunWouldRevealTicket && !guardIntroVideoReady()) {
       return
     }
 
@@ -482,8 +650,15 @@ export function DrawReveal({
           return
         }
 
-        if (!drawStatus?.finalized) {
+        if (!drawStatus) {
+          setSequenceMessage(copy.walletPanel.read)
+          await onRefreshStatus()
+          return
+        }
+
+        if (!drawStatus.finalized) {
           setSequenceMessage(copy.drawReveal.lockLedgerFirst)
+          await onFinalizeLedger()
           return
         }
 
@@ -587,6 +762,10 @@ export function DrawReveal({
       return
     }
 
+    if (!guardIntroVideoReady()) {
+      return
+    }
+
     sequenceLockRef.current = true
     setRevealedContractResults(contractResults)
     setCurrentReveal(null)
@@ -622,33 +801,24 @@ export function DrawReveal({
       return
     }
 
-    if (!sequenceLockRef.current && canRevealExistingSelection && selectedExistingRevealResults[0]) {
-      const result = selectedExistingRevealResults[0]
-      setCurrentReveal(result)
-      setDigitRevealState({ ticketNumber: result.ticket.toString(), count: 0 })
-      setPhase('reveal')
-      previousRevealedDigitCountRef.current = 0
+    if (primaryRunWouldRevealTicket && !guardIntroVideoReady()) {
+      return
     }
+
     void runSelectedDraw()
   }
 
   function replay() {
     if (!hasTicketNumber) return
-    const video = videoRef.current
-    clearRevealTimer()
+    if (!guardIntroVideoReady()) return
     previousRevealedDigitCountRef.current = 0
     setDigitRevealState({ ticketNumber, count: 0 })
-    setPhase('video')
-    if (!video) return
-    video.currentTime = 0
-    void startVideo().then((played) => {
-      if (!played) finishVideo()
-    })
+    void playVideoClip()
   }
 
   function resetDemo() {
     if (isLiveRunMode) return
-    clearRevealTimer()
+    cancelVideoPlaybackWait()
     setDemoResults([])
     setCurrentReveal(null)
     setDigitRevealState({ ticketNumber: '', count: 0 })
@@ -656,9 +826,57 @@ export function DrawReveal({
     setPhase('idle')
   }
 
+  async function resetLiveRound() {
+    if (!isLiveRunMode || !hasWallet || !drawStatus || isSequenceRunning || isContractBusy) return
+    setSequenceMessage('')
+    if (drawStatus.state === 2) {
+      setSequenceMessage(copy.walletPanel.resetBlockedDuringRequest)
+      return
+    }
+    if (!canResetRound) {
+      setSequenceMessage(copy.walletPanel.ownerOnlyAction)
+      return
+    }
+
+    cancelVideoPlaybackWait()
+    sequenceLockRef.current = true
+    setIsSequenceRunning(true)
+    try {
+      setSequenceMessage(copy.walletPanel.txAwaitingSignature)
+      const didReset = await onResetRound()
+      if (!didReset) return
+      setRevealedContractResults([])
+      setCurrentReveal(null)
+      setDigitRevealState({ ticketNumber: '', count: 0 })
+      setPhase('idle')
+      setSelectedPrizeGroupId('grand')
+      setBatchRevealCount(1)
+    } finally {
+      sequenceLockRef.current = false
+      setIsSequenceRunning(false)
+    }
+  }
+
+  useEffect(() => {
+    if (hasWallet && sequenceMessage === copy.drawReveal.contractModeNeedsWallet) {
+      setSequenceMessage('')
+    }
+  }, [copy.drawReveal.contractModeNeedsWallet, hasWallet, sequenceMessage])
+
+  useEffect(() => {
+    if (!isLiveRunMode || !drawStatus || drawStatus.finalized || drawStatus.winnerCount > 0n) return
+    cancelVideoPlaybackWait()
+    setRevealedContractResults([])
+    setCurrentReveal(null)
+    setDigitRevealState({ ticketNumber: '', count: 0 })
+    setSelectedPrizeGroupId('grand')
+    setBatchRevealCount(1)
+    setPhase('idle')
+  }, [cancelVideoPlaybackWait, drawStatus?.finalized, drawStatus?.state, drawStatus?.winnerCount, isLiveRunMode])
+
   function selectRunMode(nextRunMode: DrawRunMode) {
     if (nextRunMode === runMode) return
-    clearRevealTimer()
+    cancelVideoPlaybackWait()
     setCurrentReveal(null)
     setDigitRevealState({ ticketNumber: '', count: 0 })
     setSequenceMessage('')
@@ -668,7 +886,30 @@ export function DrawReveal({
     setPhase(nextResults.length > 0 ? 'reveal' : 'idle')
   }
 
-  useEffect(() => clearRevealTimer, [clearRevealTimer])
+  useEffect(() => cancelVideoPlaybackWait, [cancelVideoPlaybackWait])
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+    if (video.error) {
+      setVideoLoadError(true)
+      setVideoReady(false)
+      return
+    }
+    if (video.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA) {
+      setVideoLoadError(false)
+      setVideoReady(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    const hasActiveTransaction = transactionRecords.some((record) => record.status === 'awaiting-signature' || record.status === 'pending')
+    if (!isWaitingForContractRandomness && !hasActiveTransaction) return undefined
+    const intervalId = window.setInterval(() => setClockNow(Date.now()), 1000)
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [isWaitingForContractRandomness, transactionRecords])
 
   useEffect(() => {
     const root = rootRef.current
@@ -874,12 +1115,52 @@ export function DrawReveal({
             {isSequenceRunning || isContractBusy ? <Loader2 className="spin" size={17} /> : <Play size={17} />}
             <span>{primaryRunLabel}</span>
           </button>
-          <button className="icon-button draw-reveal-replay" type="button" onClick={replay} disabled={!hasTicketNumber || isSequenceRunning}>
+          {isLiveRunMode && hasWallet && drawStatus && (drawStatus.finalized || drawStatus.winnerCount > 0n) && (
+            <button className="icon-button draw-reveal-reset" type="button" onClick={resetLiveRound} disabled={isSequenceRunning || isContractBusy}>
+              <RotateCcw size={17} />
+              <span>{copy.walletPanel.resetRound}</span>
+            </button>
+          )}
+          <button className="icon-button draw-reveal-replay" type="button" onClick={replay} disabled={!hasTicketNumber || isSequenceRunning || isIntroVideoBlocked}>
             <RotateCcw size={17} />
             <span>{copy.drawReveal.replay}</span>
           </button>
         </div>
       </div>
+
+      {isLiveRunMode && (
+        <div className={`draw-network-banner draw-network-banner--${runMode}`}>
+          <div>
+            <span>{copy.drawReveal.currentNetwork}</span>
+            <strong>{network.label}</strong>
+            <small>{network.chainName}</small>
+          </div>
+          <div>
+            <span>{copy.walletPanel.contract}</span>
+            <strong>{formatAddress(network.contractAddress)}</strong>
+            <small>{network.contractAddress}</small>
+          </div>
+          <div>
+            <span>{copy.walletPanel.operator}</span>
+            <strong>{walletAddress ? formatAddress(walletAddress) : copy.walletPanel.disconnected}</strong>
+            <small>
+              {copy.walletPanel.authorizedOperator}: {formatAddress(authorizedOperatorAddress)}
+            </small>
+          </div>
+          <div>
+            <span>{copy.walletPanel.vrfTiming}</span>
+            <strong>{liveContractStatus}</strong>
+            <small>
+              {copy.walletPanel.vrfWait}: {vrfWaitDuration}
+            </small>
+          </div>
+          <div className={hasVrfFundingIssue ? 'is-warning' : ''}>
+            <span>{copy.walletPanel.vrfBalance}</span>
+            <strong>{vrfBalanceLabel}</strong>
+            <small>{vrfSubscriptionMeta}</small>
+          </div>
+        </div>
+      )}
 
       <div className="draw-reveal-console">
         <div className="draw-reveal-control-group draw-reveal-prize-control">
@@ -963,8 +1244,8 @@ export function DrawReveal({
               {copy.common.connectWallet}
             </button>
           )}
-          {isLiveRunMode && hasWallet && (
-            <button className="draw-reveal-run-secondary" type="button" onClick={runRandomPrizeSlotDraw} disabled={!canUseRandomPrizeSlot || isContractBusy || isSequenceRunning}>
+          {isLiveRunMode && hasWallet && drawStatus?.supportsSelectablePrizeSlots && (
+            <button className="draw-reveal-run-secondary" type="button" onClick={runRandomPrizeSlotDraw} disabled={!canUseRandomPrizeSlot || isContractBusy || isSequenceRunning || isIntroVideoBlocked}>
               <Shuffle size={16} />
               {copy.drawReveal.randomPrizeSlot}
             </button>
@@ -976,20 +1257,61 @@ export function DrawReveal({
           )}
         </div>
 
-        {(sequenceMessage ||
+        {(resetOrTransactionMessage ||
+          (primaryRunWouldRevealTicket && isIntroVideoBlocked) ||
+          (isLiveRunMode && vrfConfigWarning) ||
           (isLiveRunMode && isContractLedgerMismatch) ||
+          (isLiveRunMode && vrfFundingWarning) ||
           (isLiveRunMode && hasWallet && requiresSequentialContractReveal && !isSelectedGroupNextToReveal && selectedRemainingSlots.length > 0) ||
           (isLiveRunMode && hasWallet && drawStatus && !drawStatus.supportsSelectablePrizeSlots)) && (
           <p className="draw-reveal-sequence-message">
-            {sequenceMessage ||
-              (isContractLedgerMismatch
+            {resetOrTransactionMessage ||
+              (primaryRunWouldRevealTicket && isIntroVideoBlocked
+                ? introVideoMessage
+                : vrfConfigWarning
+                ? vrfConfigWarning
+                : isContractLedgerMismatch
                 ? copy.walletPanel.contractTotalMismatch
-                : drawStatus && !drawStatus.supportsSelectablePrizeSlots
+                : vrfFundingWarning
+                  ? vrfFundingWarning
+                  : drawStatus && !drawStatus.supportsSelectablePrizeSlots
                   ? copy.drawReveal.selectableOrderUnavailable
                   : `${copy.drawReveal.contractOrderNotice} ${copy.drawReveal.slotLabel} #${nextSequentialContractSlot + 1}`)}
           </p>
         )}
       </div>
+
+      {isLiveRunMode && (
+        <div className="draw-transaction-timeline">
+          <div className="draw-transaction-timeline-head">
+            <span>{copy.walletPanel.transactionTimeline}</span>
+            <strong>{latestTransactionRecords.length ? `${latestTransactionRecords.length} ${copy.walletPanel.sessionTransactions}` : copy.walletPanel.noSessionTransactions}</strong>
+          </div>
+          {latestTransactionRecords.length > 0 ? (
+            <div className="draw-transaction-list">
+              {latestTransactionRecords.map((record) => (
+                <a
+                  className={`draw-transaction-item is-${record.status}`}
+                  href={record.hash ? `${explorerBaseUrl}/tx/${record.hash}` : undefined}
+                  target="_blank"
+                  rel="noreferrer"
+                  key={record.id}
+                  aria-disabled={!record.hash}
+                >
+                  <span>{transactionKindLabel(record)}</span>
+                  <strong>{record.hash ? `${record.hash.slice(0, 10)}...` : copy.walletPanel.txAwaitingSignature}</strong>
+                  <small>
+                    {transactionStatusLabel(record)} · {transactionDuration(record, clockNow || record.confirmedAt || record.submittedAt || record.startedAt)}
+                    {record.detail ? ` · ${record.detail}` : ''}
+                  </small>
+                </a>
+              ))}
+            </div>
+          ) : (
+            <p>{copy.walletPanel.noSessionTransactions}</p>
+          )}
+        </div>
+      )}
 
       <div
         className={`draw-reveal-stage draw-reveal-stage--${phase}`}
@@ -1019,21 +1341,12 @@ export function DrawReveal({
           ref={videoRef}
           className="draw-reveal-video"
           src={DRAW_ANIMATION_SRC}
-          muted
           playsInline
-          preload="metadata"
-          onPause={(event) => {
-            if (event.currentTarget.ended) {
-              finishVideo()
-              return
-            }
-            clearRevealTimer()
-          }}
-          onTimeUpdate={(event) => {
-            const video = event.currentTarget
-            if (video.duration && video.currentTime >= video.duration - 0.04) finishVideo()
-          }}
-          onEnded={finishVideo}
+          preload="auto"
+          onLoadedData={(event) => updateVideoReadiness(event.currentTarget)}
+          onCanPlay={(event) => updateVideoReadiness(event.currentTarget)}
+          onCanPlayThrough={(event) => updateVideoReadiness(event.currentTarget)}
+          onError={markVideoLoadError}
         />
 
         <div className="draw-reveal-result" aria-live="polite">
@@ -1097,7 +1410,7 @@ export function DrawReveal({
                 </span>
                 <span>
                   <b>
-                    #{compactNumber(candidateSnapshot.rangeStart)}-#{compactNumber(candidateSnapshot.rangeEnd)}
+                    {`#${formatDrawTicketNumber(candidateSnapshot.rangeStart, totalTickets)}-#${formatDrawTicketNumber(candidateSnapshot.rangeEnd, totalTickets)}`}
                   </b>
                   {copy.drawReveal.ticketWindow}
                 </span>
@@ -1120,7 +1433,7 @@ export function DrawReveal({
                 {leadCandidate.sampleTickets.length > 0 && (
                   <div className="draw-reveal-ticket-chips" aria-label={copy.drawReveal.sampleTickets}>
                     {leadCandidate.sampleTickets.slice(0, 6).map((ticket) => (
-                      <span key={ticket}>#{compactNumber(ticket)}</span>
+                      <span key={ticket}>#{formatDrawTicketNumber(ticket, totalTickets)}</span>
                     ))}
                   </div>
                 )}
@@ -1144,7 +1457,7 @@ export function DrawReveal({
                       {candidate.sampleTickets.length > 0 && (
                         <div className="draw-reveal-ticket-chips" aria-label={copy.drawReveal.sampleTickets}>
                           {candidate.sampleTickets.slice(0, 4).map((ticket) => (
-                            <span key={ticket}>#{compactNumber(ticket)}</span>
+                            <span key={ticket}>#{formatDrawTicketNumber(ticket, totalTickets)}</span>
                           ))}
                         </div>
                       )}
@@ -1197,7 +1510,7 @@ export function DrawReveal({
                     groupResults.map((result) => (
                       <div className="draw-winner-card" key={`${result.source}-${result.slotIndex}-${result.ticket.toString()}`}>
                         <span>{copy.drawReveal.slotLabel} #{result.slotIndex + 1}</span>
-                        <strong>#{compactNumber(result.ticket)}</strong>
+                        <strong>#{formatDrawTicketNumber(result.ticket, totalTickets)}</strong>
                         <small>{prizeRewards[result.prizeGroupId]}</small>
                         <div>
                           <b>{ownerName(result)}</b>

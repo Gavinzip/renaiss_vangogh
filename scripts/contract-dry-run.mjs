@@ -9,28 +9,25 @@ interface IVRFConsumer {
     function rawFulfillRandomWords(uint256 requestId, uint256[] calldata randomWords) external;
 }
 
-library VRFV2PlusClient {
-    struct RandomWordsRequest {
-        bytes32 keyHash;
-        uint256 subId;
-        uint16 requestConfirmations;
-        uint32 callbackGasLimit;
-        uint32 numWords;
-        bytes extraArgs;
-    }
-}
-
-contract LocalVRFCoordinatorV2PlusMock {
+contract LocalVRFCoordinatorMock {
     uint256 public nextRequestId = 1;
     mapping(uint256 => address) public consumers;
 
     event RandomWordsRequested(uint256 indexed requestId, address indexed consumer);
     event RandomWordsFulfilled(uint256 indexed requestId, uint256 randomWord);
 
-    function requestRandomWords(VRFV2PlusClient.RandomWordsRequest calldata req) external returns (uint256 requestId) {
-        require(req.subId != 0, "subId");
-        require(req.callbackGasLimit != 0, "gas");
-        require(req.numWords == 1, "words");
+    function requestRandomWords(
+        bytes32 keyHash,
+        uint64 subId,
+        uint16 requestConfirmations,
+        uint32 callbackGasLimit,
+        uint32 numWords
+    ) external returns (uint256 requestId) {
+        require(keyHash != bytes32(0), "keyHash");
+        require(subId != 0, "subId");
+        require(requestConfirmations >= 3, "confirmations");
+        require(callbackGasLimit != 0, "gas");
+        require(numWords == 1, "words");
         requestId = nextRequestId++;
         consumers[requestId] = msg.sender;
         emit RandomWordsRequested(requestId, msg.sender);
@@ -50,7 +47,7 @@ function compileMock() {
   const input = {
     language: 'Solidity',
     sources: {
-      'LocalVRFCoordinatorV2PlusMock.sol': {
+      'LocalVRFCoordinatorMock.sol': {
         content: MOCK_SOURCE,
       },
     },
@@ -69,7 +66,7 @@ function compileMock() {
     throw new Error(errors.map((error) => error.formattedMessage).join('\n'))
   }
 
-  const contract = output.contracts['LocalVRFCoordinatorV2PlusMock.sol'].LocalVRFCoordinatorV2PlusMock
+  const contract = output.contracts['LocalVRFCoordinatorMock.sol'].LocalVRFCoordinatorMock
   return {
     abi: contract.abi,
     bytecode: `0x${contract.evm.bytecode.object}`,
@@ -104,8 +101,7 @@ const raffle = await raffleFactory.deploy(
   keyHash,
   1,
   3,
-  500000,
-  false,
+  200000,
   21,
 )
 await raffle.waitForDeployment()

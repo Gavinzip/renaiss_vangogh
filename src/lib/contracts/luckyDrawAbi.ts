@@ -13,6 +13,8 @@ export const luckyDrawAbi = [
   'function resetDraft() external',
   'function owner() external view returns (address)',
   'function drawOperator() external view returns (address)',
+  'function vrfCoordinatorAddress() external view returns (address)',
+  'function vrfConfig() external view returns (bytes32 keyHash, uint64 subscriptionId, uint16 requestConfirmations, uint32 callbackGasLimit)',
   'function state() external view returns (uint8)',
   'function roundStatus() external view returns (bool finalized, bool requested, bool fulfilled, uint256 totalTickets, uint256 firstWinningTicket, bytes32 ledgerHash, uint256 prizeSlotCount, uint256 winnerCount)',
   'function winnerTickets() external view returns (uint256[] memory)',

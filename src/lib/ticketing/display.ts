@@ -12,6 +12,19 @@ export function compactNumber(value: number | bigint | string): string {
   return new Intl.NumberFormat(undefined).format(Number(value || 0))
 }
 
+function positiveIntegerString(value: number | bigint | string): string {
+  if (typeof value === 'bigint') return value > 0n ? value.toString() : '0'
+  const numericValue = Number(value || 0)
+  if (!Number.isFinite(numericValue) || numericValue <= 0) return '0'
+  return String(Math.floor(numericValue))
+}
+
+export function formatDrawTicketNumber(value: number | bigint | string, totalTickets: number | bigint | string): string {
+  const ticket = positiveIntegerString(value)
+  const width = Math.max(1, positiveIntegerString(totalTickets).length)
+  return ticket.padStart(width, '0')
+}
+
 function ticketCode(value: number, prefix: string): string {
   return `${prefix}-${String(Math.max(0, Math.floor(value || 0))).padStart(6, '0')}`
 }

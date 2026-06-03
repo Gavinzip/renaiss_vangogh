@@ -1626,7 +1626,7 @@ body::after {
   font-weight: 800;
   letter-spacing: 0;
   outline: none;
-  cursor: pointer;
+  cursor: default;
 }
 
 .nav-action {
@@ -3691,7 +3691,6 @@ body::after {
   --rx: 0deg;
   --ry: 0deg;
   --hyp: 0;
-  --flip: 0deg;
   --card-depth: 18px;
   position: relative;
   z-index: 2;
@@ -3703,7 +3702,7 @@ body::after {
   border: 0;
   border-radius: 0;
   background: transparent;
-  cursor: pointer;
+  cursor: default;
   perspective: 1200px;
   outline: none;
   appearance: none;
@@ -3716,7 +3715,6 @@ body::after {
 }
 
 .holo-prize-card:hover,
-.holo-prize-card:hover:not(:disabled),
 .holo-prize-card:focus-visible {
   transform: translate3d(0, 0, 0);
   border: 0;
@@ -3735,7 +3733,7 @@ body::after {
   width: 100%;
   height: 100%;
   border-radius: inherit;
-  transform: rotateX(var(--ry)) rotateY(calc(var(--flip) + var(--rx)));
+  transform: rotateX(var(--ry)) rotateY(var(--rx));
   transform-style: preserve-3d;
   isolation: isolate;
   transition:
@@ -3794,10 +3792,6 @@ body::after {
 
 .holo-prize-card__front {
   transform: rotateY(0deg) translateZ(var(--card-depth));
-}
-
-.holo-prize-card__back {
-  transform: rotateY(180deg) translateZ(var(--card-depth));
 }
 
 .holo-prize-card__face,

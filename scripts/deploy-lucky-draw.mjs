@@ -4,11 +4,23 @@ import { Contract, ContractFactory, JsonRpcProvider, Wallet, ethers } from 'ethe
 const ARTIFACT_FILE = new URL('../artifacts/contracts/RenaissLuckyDraw.sol/RenaissLuckyDraw.json', import.meta.url)
 
 const COORDINATOR_ABI = [
-  'function createSubscription() external returns (uint256 subId)',
-  'function fundSubscriptionWithNative(uint256 subId) external payable',
-  'function addConsumer(uint256 subId, address consumer) external',
-  'event SubscriptionCreated(uint256 indexed subId, address owner)',
+  'function createSubscription() external returns (uint64 subId)',
+  'function deposit(uint64 subId) external payable',
+  'function addConsumer(uint64 subId, address consumer) external',
+  'function getSubscription(uint64 subId) view returns (uint96 balance, uint64 reqCount, address owner, address[] memory consumers)',
+  'event SubscriptionCreated(uint64 indexed subId, address owner)',
 ]
+
+const BINANCE_ORACLE_VRF = {
+  56: {
+    coordinator: '0x9632ADE542f12114f5E5AD4d6F8e47fB993955da',
+    keyHash: '0xcd65a78499993598be303c914c3e37b0103ead6b1f279d1dbfa0ef080e7141a4',
+  },
+  97: {
+    coordinator: '0xa2d23627bC0314f4Cbd08Ff54EcB89bb45685053',
+    keyHash: '0x617abc3f53ae11766071d04ada1c7b0fbd49833b9542e9e91da4d3191c70cc80',
+  },
+}
 
 function argValue(name) {
   const index = process.argv.indexOf(name)
@@ -47,12 +59,6 @@ function optionalInt(key, fallback) {
   return value ? Number(value) : fallback
 }
 
-function optionalBool(key, fallback) {
-  const value = env[key]
-  if (!value) return fallback
-  return ['1', 'true', 'yes'].includes(value.toLowerCase())
-}
-
 function optionalAddress(key, fallback) {
   const value = env[key] || fallback
   if (!value) return ''
@@ -83,12 +89,25 @@ if (network.chainId !== expectedChainId) {
   throw new Error(`RPC chainId ${network.chainId} does not match expected ${expectedChainId}.`)
 }
 
+const binanceVrfDefaults = BINANCE_ORACLE_VRF[Number(expectedChainId)]
+if (!binanceVrfDefaults) {
+  throw new Error(`No Binance Oracle VRF defaults configured for chain ${expectedChainId}.`)
+}
+
 const balance = await provider.getBalance(wallet.address)
-const coordinatorAddress = required('VRF_COORDINATOR')
-const keyHash = required('VRF_KEY_HASH')
+const coordinatorAddress = env.VRF_COORDINATOR || binanceVrfDefaults.coordinator
+const keyHash = env.VRF_KEY_HASH || binanceVrfDefaults.keyHash
+if (!ethers.isAddress(coordinatorAddress)) {
+  throw new Error('VRF_COORDINATOR must be a valid EVM address.')
+}
+if (ethers.getAddress(coordinatorAddress) !== ethers.getAddress(binanceVrfDefaults.coordinator)) {
+  throw new Error(`VRF_COORDINATOR must be Binance Oracle VRF coordinator ${binanceVrfDefaults.coordinator}.`)
+}
+if (keyHash.toLowerCase() !== binanceVrfDefaults.keyHash.toLowerCase()) {
+  throw new Error(`VRF_KEY_HASH must be Binance Oracle VRF keyHash ${binanceVrfDefaults.keyHash}.`)
+}
 const requestConfirmations = optionalInt('VRF_REQUEST_CONFIRMATIONS', 3)
-const callbackGasLimit = optionalInt('VRF_CALLBACK_GAS_LIMIT', 750000)
-const nativePayment = optionalBool('VRF_NATIVE_PAYMENT', true)
+const callbackGasLimit = optionalInt('VRF_CALLBACK_GAS_LIMIT', 200000)
 const initialPrizeSlotCount = optionalInt('INITIAL_PRIZE_SLOT_COUNT', 21)
 const configuredSubscriptionId = env.VRF_SUBSCRIPTION_ID ? BigInt(env.VRF_SUBSCRIPTION_ID) : 0n
 const targetDrawOperator = optionalAddress('DRAW_OPERATOR_ADDRESS', '0x88b620388698490764fd85cfa482b5e3a8ad63b5')
@@ -102,10 +121,10 @@ const safeConfig = {
   balanceBNB: ethers.formatEther(balance),
   vrfCoordinator: coordinatorAddress,
   keyHash,
+  vrfProvider: 'Binance Oracle VRF',
   configuredSubscriptionId: configuredSubscriptionId.toString(),
   requestConfirmations,
   callbackGasLimit,
-  nativePayment,
   initialPrizeSlotCount,
   targetDrawOperator,
   targetOwner,
@@ -142,10 +161,10 @@ if (subscriptionId === 0n) {
   subscriptionId = parseSubscriptionId(createReceipt, coordinator)
   if (subscriptionId === 0n) throw new Error('Could not read SubscriptionCreated event from VRF coordinator.')
 
-  const fundAmount = ethers.parseEther(env.VRF_NATIVE_FUND_BNB || '0.05')
+  const fundAmount = ethers.parseEther(env.VRF_NATIVE_FUND_BNB || '0.001')
   if (fundAmount > 0n) {
-    const fundTx = await coordinator.fundSubscriptionWithNative(subscriptionId, { value: fundAmount })
-    txs.push({ step: 'fundSubscriptionWithNative', hash: fundTx.hash, amountBNB: ethers.formatEther(fundAmount) })
+    const fundTx = await coordinator.deposit(subscriptionId, { value: fundAmount })
+    txs.push({ step: 'depositSubscription', hash: fundTx.hash, amountBNB: ethers.formatEther(fundAmount) })
     await fundTx.wait()
   }
 }
@@ -158,7 +177,6 @@ const raffle = await factory.deploy(
   subscriptionId,
   requestConfirmations,
   callbackGasLimit,
-  nativePayment,
   initialPrizeSlotCount,
 )
 txs.push({ step: 'deployRenaissLuckyDraw', hash: raffle.deploymentTransaction()?.hash || '' })

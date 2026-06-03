@@ -1,6 +1,7 @@
 import { BrowserProvider, Contract } from 'ethers'
 import { luckyDrawAbi } from '../contracts/luckyDrawAbi'
 import { DRAW_NETWORKS, type DrawNetworkKey } from '../contracts/luckyDrawNetworks'
+import type { DrawVrfSubscriptionStatus } from './vrfSubscription'
 
 export const BSC_MAINNET_CHAIN_ID = DRAW_NETWORKS.mainnet.chainId
 export const BSC_TESTNET_CHAIN_ID = DRAW_NETWORKS.testnet.chainId
@@ -39,11 +40,69 @@ export interface DrawStatus {
   ownerAddress: string
   drawOperatorAddress: string
   supportsSelectablePrizeSlots: boolean
+  vrfSubscription: DrawVrfSubscriptionStatus | null
+  vrfSubscriptionError: string
 }
 
 export interface ContractRevealResult {
   prizeSlotIndex: number
   ticket: bigint
+}
+
+export type ContractTransactionSubmitted = (hash: string) => void
+
+const binanceVrfCoordinatorAbi = [
+  'function getSubscription(uint64 subId) view returns (uint96 balance, uint64 reqCount, address owner, address[] memory consumers)',
+  'function pendingRequestExists(uint64 subId) view returns (bool)',
+] as const
+
+function attachBigIntArrayJson<T extends bigint[]>(value: T): T {
+  Object.defineProperty(value, 'toJSON', {
+    configurable: true,
+    enumerable: false,
+    value: () => value.map((item) => item.toString()),
+  })
+  return value
+}
+
+function vrfSubscriptionJson(value: DrawVrfSubscriptionStatus | null) {
+  if (!value) return null
+  return {
+    ...value,
+    balance: value.balance.toString(),
+    callbackGasLimit: value.callbackGasLimit.toString(),
+    requestCount: value.requestCount.toString(),
+    subscriptionId: value.subscriptionId.toString(),
+  }
+}
+
+export function makeDrawStatusSerializable(status: DrawStatus): DrawStatus {
+  const nextStatus = {
+    ...status,
+    winnerTickets: attachBigIntArrayJson([...status.winnerTickets]),
+    revealedPrizeSlots: attachBigIntArrayJson([...status.revealedPrizeSlots]),
+    revealedTickets: attachBigIntArrayJson([...status.revealedTickets]),
+    winnerTicketsBySlot: attachBigIntArrayJson([...status.winnerTicketsBySlot]),
+  }
+
+  Object.defineProperty(nextStatus, 'toJSON', {
+    configurable: true,
+    enumerable: false,
+    value: () => ({
+      ...nextStatus,
+      firstWinningTicket: nextStatus.firstWinningTicket.toString(),
+      prizeSlotCount: nextStatus.prizeSlotCount.toString(),
+      totalTickets: nextStatus.totalTickets.toString(),
+      vrfSubscription: vrfSubscriptionJson(nextStatus.vrfSubscription),
+      winnerCount: nextStatus.winnerCount.toString(),
+    }),
+  })
+
+  return nextStatus
+}
+
+function addressesMatch(left: string, right: string) {
+  return left.toLowerCase() === right.toLowerCase()
 }
 
 export async function connectInjectedWallet(networkKey: DrawNetworkKey): Promise<ConnectedWallet> {
@@ -109,11 +168,13 @@ export async function finalizeContractLedger(
   totalTickets: number,
   prizeSlotCount: number,
   ledgerUri: string,
+  onSubmitted?: ContractTransactionSubmitted,
 ): Promise<string> {
   await ensureBscNetwork(provider, networkKey)
   const signer = await provider.getSigner()
   const contract = new Contract(contractAddress, luckyDrawAbi, signer)
   const tx = await contract.finalizeLedger(ledgerHash, BigInt(totalTickets), BigInt(prizeSlotCount), ledgerUri)
+  onSubmitted?.(tx.hash)
   const receipt = await tx.wait()
   return receipt?.hash || tx.hash
 }
@@ -122,11 +183,13 @@ export async function requestContractDraw(
   provider: BrowserProvider,
   contractAddress: string,
   networkKey: DrawNetworkKey,
+  onSubmitted?: ContractTransactionSubmitted,
 ): Promise<string> {
   await ensureBscNetwork(provider, networkKey)
   const signer = await provider.getSigner()
   const contract = new Contract(contractAddress, luckyDrawAbi, signer)
   const tx = await contract.requestDraw()
+  onSubmitted?.(tx.hash)
   const receipt = await tx.wait()
   return receipt?.hash || tx.hash
 }
@@ -135,11 +198,13 @@ export async function drawNextWinner(
   provider: BrowserProvider,
   contractAddress: string,
   networkKey: DrawNetworkKey,
+  onSubmitted?: ContractTransactionSubmitted,
 ): Promise<string> {
   await ensureBscNetwork(provider, networkKey)
   const signer = await provider.getSigner()
   const contract = new Contract(contractAddress, luckyDrawAbi, signer)
   const tx = await contract.drawNext()
+  onSubmitted?.(tx.hash)
   const receipt = await tx.wait()
   return receipt?.hash || tx.hash
 }
@@ -149,11 +214,13 @@ export async function drawBatchWinners(
   contractAddress: string,
   networkKey: DrawNetworkKey,
   count: number,
+  onSubmitted?: ContractTransactionSubmitted,
 ): Promise<string> {
   await ensureBscNetwork(provider, networkKey)
   const signer = await provider.getSigner()
   const contract = new Contract(contractAddress, luckyDrawAbi, signer)
   const tx = await contract.drawBatch(BigInt(count))
+  onSubmitted?.(tx.hash)
   const receipt = await tx.wait()
   return receipt?.hash || tx.hash
 }
@@ -163,11 +230,13 @@ export async function drawPrizeSlotWinner(
   contractAddress: string,
   networkKey: DrawNetworkKey,
   prizeSlotIndex: number,
+  onSubmitted?: ContractTransactionSubmitted,
 ): Promise<string> {
   await ensureBscNetwork(provider, networkKey)
   const signer = await provider.getSigner()
   const contract = new Contract(contractAddress, luckyDrawAbi, signer)
   const tx = await contract.drawPrizeSlot(BigInt(prizeSlotIndex))
+  onSubmitted?.(tx.hash)
   const receipt = await tx.wait()
   return receipt?.hash || tx.hash
 }
@@ -177,11 +246,13 @@ export async function drawPrizeSlotWinners(
   contractAddress: string,
   networkKey: DrawNetworkKey,
   prizeSlotIndexes: number[],
+  onSubmitted?: ContractTransactionSubmitted,
 ): Promise<string> {
   await ensureBscNetwork(provider, networkKey)
   const signer = await provider.getSigner()
   const contract = new Contract(contractAddress, luckyDrawAbi, signer)
   const tx = await contract.drawPrizeSlots(prizeSlotIndexes.map((slotIndex) => BigInt(slotIndex)))
+  onSubmitted?.(tx.hash)
   const receipt = await tx.wait()
   return receipt?.hash || tx.hash
 }
@@ -190,11 +261,13 @@ export async function drawRandomPrizeSlotWinner(
   provider: BrowserProvider,
   contractAddress: string,
   networkKey: DrawNetworkKey,
+  onSubmitted?: ContractTransactionSubmitted,
 ): Promise<string> {
   await ensureBscNetwork(provider, networkKey)
   const signer = await provider.getSigner()
   const contract = new Contract(contractAddress, luckyDrawAbi, signer)
   const tx = await contract.drawRandomPrizeSlot()
+  onSubmitted?.(tx.hash)
   const receipt = await tx.wait()
   return receipt?.hash || tx.hash
 }
@@ -203,11 +276,13 @@ export async function resetContractDraft(
   provider: BrowserProvider,
   contractAddress: string,
   networkKey: DrawNetworkKey,
+  onSubmitted?: ContractTransactionSubmitted,
 ): Promise<string> {
   await ensureBscNetwork(provider, networkKey)
   const signer = await provider.getSigner()
   const contract = new Contract(contractAddress, luckyDrawAbi, signer)
   const tx = await contract.resetDraft()
+  onSubmitted?.(tx.hash)
   const receipt = await tx.wait()
   return receipt?.hash || tx.hash
 }
@@ -218,6 +293,7 @@ export async function readDrawStatus(
   networkKey: DrawNetworkKey,
 ): Promise<DrawStatus> {
   await ensureBscNetwork(provider, networkKey)
+  const network = DRAW_NETWORKS[networkKey]
   const contract = new Contract(contractAddress, luckyDrawAbi, provider)
   const [
     finalized,
@@ -252,7 +328,48 @@ export async function readDrawStatus(
     revealedTickets = winnerTickets
     winnerTicketsBySlot = Array.from({ length: Number(prizeSlotCount) }, (_, index) => winnerTickets[index] ?? 0n)
   }
-  return {
+  let vrfSubscription: DrawVrfSubscriptionStatus | null = null
+  let vrfSubscriptionError = ''
+  try {
+    const [vrfConfig, contractCoordinatorAddress] = await Promise.all([
+      contract.vrfConfig(),
+      contract.vrfCoordinatorAddress(),
+    ])
+    if (!addressesMatch(contractCoordinatorAddress, network.vrfCoordinatorAddress)) {
+      throw new Error(
+        `Active contract uses VRF coordinator ${contractCoordinatorAddress}; redeploy this draw contract with Binance Oracle VRF coordinator ${network.vrfCoordinatorAddress}.`,
+      )
+    }
+    if (!addressesMatch(vrfConfig.keyHash, network.keyHash)) {
+      throw new Error(
+        `Active contract uses VRF keyHash ${vrfConfig.keyHash}; redeploy or update VRF config to Binance Oracle keyHash ${network.keyHash}.`,
+      )
+    }
+
+    const coordinator = new Contract(network.vrfCoordinatorAddress, binanceVrfCoordinatorAbi, provider)
+    const subscriptionId = BigInt(vrfConfig.subscriptionId)
+    const [subscription, pendingRequestExists] = await Promise.all([
+      coordinator.getSubscription(subscriptionId),
+      coordinator.pendingRequestExists(subscriptionId),
+    ])
+    const consumerAddresses = subscription.consumers.map((consumer: string) => consumer)
+    vrfSubscription = {
+      callbackGasLimit: BigInt(vrfConfig.callbackGasLimit),
+      consumerAddresses,
+      contractIsConsumer: consumerAddresses.some((consumer: string) => addressesMatch(consumer, contractAddress)),
+      coordinatorAddress: network.vrfCoordinatorAddress,
+      keyHash: vrfConfig.keyHash,
+      balance: BigInt(subscription.balance),
+      ownerAddress: subscription.owner,
+      pendingRequestExists: Boolean(pendingRequestExists),
+      requestConfirmations: Number(vrfConfig.requestConfirmations),
+      requestCount: BigInt(subscription.reqCount),
+      subscriptionId,
+    }
+  } catch (error) {
+    vrfSubscriptionError = error instanceof Error ? error.message : String(error)
+  }
+  return makeDrawStatusSerializable({
     finalized,
     requested,
     fulfilled,
@@ -269,5 +386,7 @@ export async function readDrawStatus(
     ownerAddress,
     drawOperatorAddress,
     supportsSelectablePrizeSlots,
-  }
+    vrfSubscription,
+    vrfSubscriptionError,
+  })
 }

@@ -87,11 +87,11 @@ docker run --rm -p 3000:3000 \
 
 ## Contract
 
-`contracts/RenaissLuckyDraw.sol` is a BSC / Chainlink VRF v2.5 draw contract:
+`contracts/RenaissLuckyDraw.sol` is a BSC / Binance Oracle VRF draw contract:
 
 - owner finalizes the ledger hash and total ticket count
 - owner or draw operator requests randomness
-- Chainlink VRF fulfills exactly once
+- Binance Oracle VRF fulfills exactly once
 - public reads stay open for verification
 
 Local dry run:
@@ -108,10 +108,18 @@ npm run wallet:create
 npm run contract:deploy:check
 ```
 
-After the deployer address has BNB for gas and VRF native funding:
+After the deployer address has BNB for gas and Binance Oracle VRF subscription funding:
 
 ```bash
 npm run contract:deploy:bsc
 ```
 
+Binance Oracle VRF defaults used by the deploy script:
+
+- BSC mainnet coordinator: `0x9632ADE542f12114f5E5AD4d6F8e47fB993955da`
+- BSC mainnet keyHash: `0xcd65a78499993598be303c914c3e37b0103ead6b1f279d1dbfa0ef080e7141a4`
+- BSC testnet coordinator: `0xa2d23627bC0314f4Cbd08Ff54EcB89bb45685053`
+- BSC testnet keyHash: `0x617abc3f53ae11766071d04ada1c7b0fbd49833b9542e9e91da4d3191c70cc80`
+
 The local secret is written to `.env.deploy.local`, which is ignored by `*.local`.
+The currently deployed mainnet contract may still be the previous VRF provider until a new mainnet deployment is explicitly performed.

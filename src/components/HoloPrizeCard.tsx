@@ -1,6 +1,5 @@
 import { useCallback, useRef, useState } from 'react'
 import type { CSSProperties, PointerEvent } from 'react'
-import cardBack from '../assets/psa-pikachu-van-gogh-back-cut-fast.webp'
 import cardFront from '../assets/psa-pikachu-van-gogh-front-cut-fast.webp'
 
 const RESET_VARS = {
@@ -20,8 +19,7 @@ function applyVars(element: HTMLElement, values: Record<string, string>) {
 }
 
 export function HoloPrizeCard() {
-  const cardRef = useRef<HTMLButtonElement | null>(null)
-  const [flipped, setFlipped] = useState(false)
+  const cardRef = useRef<HTMLDivElement | null>(null)
   const [active, setActive] = useState(false)
 
   const resetCard = useCallback(() => {
@@ -31,7 +29,7 @@ export function HoloPrizeCard() {
     setActive(false)
   }, [])
 
-  const handlePointerMove = useCallback((event: PointerEvent<HTMLButtonElement>) => {
+  const handlePointerMove = useCallback((event: PointerEvent<HTMLDivElement>) => {
     const element = event.currentTarget
     const rect = element.getBoundingClientRect()
     const pointerX = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1)
@@ -54,16 +52,12 @@ export function HoloPrizeCard() {
 
   return (
     <div className="holo-prize-stage">
-      <button
+      <div
         ref={cardRef}
-        className={`holo-prize-card${flipped ? ' is-flipped' : ''}${active ? ' is-active' : ''}`}
-        type="button"
-        aria-label="Flip Van Gogh Pikachu PSA 10 prize card"
-        onClick={() => setFlipped((current) => !current)}
+        className={`holo-prize-card${active ? ' is-active' : ''}`}
         onPointerEnter={() => setActive(true)}
         onPointerMove={handlePointerMove}
         onPointerLeave={resetCard}
-        style={{ '--flip': flipped ? '180deg' : '0deg' } as CSSProperties}
       >
         <span className="holo-prize-card__rotator">
           <span className="holo-prize-card__face holo-prize-card__front">
@@ -83,16 +77,8 @@ export function HoloPrizeCard() {
               style={{ '--card-mask': `url(${cardFront})` } as CSSProperties}
             />
           </span>
-          <span className="holo-prize-card__face holo-prize-card__back">
-            <img src={cardBack} alt="Van Gogh Pikachu PSA 10 back" draggable={false} decoding="async" height={632} loading="eager" width={360} />
-            <span
-              className="holo-prize-card__glare"
-              aria-hidden="true"
-              style={{ '--card-mask': `url(${cardBack})` } as CSSProperties}
-            />
-          </span>
         </span>
-      </button>
+      </div>
     </div>
   )
 }

@@ -2,7 +2,7 @@ import { RotateCcw, Shuffle, Ticket, Trophy, UserRound } from 'lucide-react'
 import { useState } from 'react'
 import { PRIZE_GROUPS, TOTAL_PRIZE_DRAW_SLOTS, prizeGroupForSlot, prizeOrdinalInGroup } from '../lib/draw/prizeSlots'
 import type { AppCopy } from '../lib/i18n'
-import { compactNumber } from '../lib/ticketing/display'
+import { compactNumber, formatDrawTicketNumber } from '../lib/ticketing/display'
 import type { WalletIdentityMap } from '../lib/ticketing/identities'
 import { formatAddress } from '../lib/ticketing/rules'
 import type { RaffleLedger } from '../lib/ticketing/types'
@@ -123,7 +123,7 @@ export function SimpleDrawSimulator({
           <div className="simulator-latest-result">
             <div>
               <span>{copy.simulation.ticket}</span>
-              <strong>#{compactNumber(latestResult.ticket)}</strong>
+              <strong>#{formatDrawTicketNumber(latestResult.ticket, ledger.totalFinalTickets)}</strong>
             </div>
             <div>
               <span>{copy.simulation.prize}</span>
@@ -155,7 +155,7 @@ export function SimpleDrawSimulator({
             <div className="simulator-history-list">
               {results.map((result) => (
                 <article key={result.id} className="simulator-history-row">
-                  <span>#{compactNumber(result.ticket)}</span>
+                  <span>#{formatDrawTicketNumber(result.ticket, ledger.totalFinalTickets)}</span>
                   <strong>{resultWalletLabel(result, copy)}</strong>
                   <small>{result.prizeLabel}</small>
                 </article>

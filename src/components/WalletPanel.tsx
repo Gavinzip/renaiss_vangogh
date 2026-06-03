@@ -1,8 +1,11 @@
-import { Database, Loader2, LockKeyhole, RotateCcw, Wallet } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { LockKeyhole } from 'lucide-react'
 import type { DrawNetworkConfig } from '../lib/contracts/luckyDrawNetworks'
 import type { AppCopy } from '../lib/i18n'
-import { compactNumber } from '../lib/ticketing/display'
+import { compactNumber, formatDrawTicketNumber } from '../lib/ticketing/display'
 import { formatAddress } from '../lib/ticketing/rules'
+import { transactionDuration, type DrawTransactionRecord } from '../lib/wallet/drawTransactions'
+import { formatVrfPaymentBalance, hasInsufficientVrfFunding } from '../lib/wallet/vrfSubscription'
 import {
   type ConnectedWallet,
   type DrawStatus,
@@ -13,38 +16,29 @@ export function WalletPanel({
   wallet,
   status,
   message,
-  busy,
-  onConnectWallet,
-  onRefreshStatus,
-  onFinalizeLedger,
   copy,
   ledgerTotalTickets,
   ledgerHash,
   prizeSlotCount,
-  transactionHashes,
+  transactionRecords,
   authorizedOperatorAddress,
   isAuthorizedOperator,
   isContractOwner,
-  onResetRound,
 }: {
   network: DrawNetworkConfig
   wallet: ConnectedWallet | null
   status: DrawStatus | null
   message: string
-  busy: 'connect' | 'read' | 'finalize' | 'draw' | 'drawNext' | 'reset' | null
-  onConnectWallet: () => void
-  onRefreshStatus: () => void
-  onFinalizeLedger: () => void
-  onResetRound: () => void
   copy: AppCopy
   ledgerTotalTickets: number
   ledgerHash: string | null
   prizeSlotCount: number
-  transactionHashes: string[]
+  transactionRecords: DrawTransactionRecord[]
   authorizedOperatorAddress: string
   isAuthorizedOperator: boolean
   isContractOwner: boolean
 }) {
+  const [clockNow, setClockNow] = useState(0)
   const drawState = status
     ? status.fulfilled
       ? copy.walletPanel.fulfilled
@@ -54,7 +48,7 @@ export function WalletPanel({
           ? copy.walletPanel.requested
           : status.finalized
             ? copy.walletPanel.ready
-            : copy.walletPanel.disconnected
+            : copy.walletPanel.notFinalized
       : wallet
       ? copy.common.pending
       : copy.walletPanel.disconnected
@@ -62,21 +56,35 @@ export function WalletPanel({
   const hasTicketMismatch = Boolean(status && status.totalTickets !== BigInt(ledgerTotalTickets))
   const hasLedgerHashMismatch = Boolean(status && ledgerHash && status.ledgerHash.toLowerCase() !== ledgerHash.toLowerCase())
   const hasPrizeSlotMismatch = Boolean(status && status.prizeSlotCount !== BigInt(prizeSlotCount))
-  const hasLedgerMismatch = hasTicketMismatch || hasLedgerHashMismatch || hasPrizeSlotMismatch
-  const isLedgerCurrent = Boolean(status?.finalized && !hasLedgerMismatch)
-  const canResetRound = Boolean(
-    wallet &&
-      status &&
-      isContractOwner &&
-      status.state !== 2 &&
-      (status.finalized || status.requested || status.winnerCount > 0n || status.totalTickets > 0n),
-  )
+  const hasLedgerMismatch = Boolean(status?.finalized && (hasTicketMismatch || hasLedgerHashMismatch || hasPrizeSlotMismatch))
   const explorerBaseUrl = network.blockExplorerUrls[0]?.replace(/\/$/, '') ?? ''
   const contractExplorerUrl = `${explorerBaseUrl}/address/${network.contractAddress}`
   const contractEventsUrl = `${contractExplorerUrl}#events`
-  const canFinalizeLedger = Boolean(wallet && isContractOwner && ledgerHash && !status?.requested && !isLedgerCurrent)
-  const finalizeDisabled = busy !== null || !canFinalizeLedger
-  const resetDisabled = busy !== null || !canResetRound
+  const vrfSubscription = status?.vrfSubscription ?? null
+  const hasVrfFundingIssue = hasInsufficientVrfFunding(vrfSubscription)
+  const vrfBalanceLabel = formatVrfPaymentBalance(vrfSubscription)
+  function transactionKindLabel(record: DrawTransactionRecord) {
+    if (record.kind === 'reset') return copy.walletPanel.resetRound
+    if (record.kind === 'finalize') return copy.walletPanel.finalizeLedger
+    if (record.kind === 'request') return copy.drawReveal.requestRound
+    return copy.walletPanel.drawNext
+  }
+
+  function transactionStatusLabel(record: DrawTransactionRecord) {
+    if (record.status === 'awaiting-signature') return copy.walletPanel.txAwaitingSignature
+    if (record.status === 'pending') return copy.walletPanel.txPending
+    if (record.status === 'confirmed') return copy.walletPanel.txConfirmed
+    return copy.walletPanel.txFailed
+  }
+
+  useEffect(() => {
+    const hasActiveTransaction = transactionRecords.some((record) => record.status === 'awaiting-signature' || record.status === 'pending')
+    if (!hasActiveTransaction) return undefined
+    const intervalId = window.setInterval(() => setClockNow(Date.now()), 1000)
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [transactionRecords])
 
   return (
     <section className="panel wallet-panel">
@@ -102,34 +110,8 @@ export function WalletPanel({
       </div>
 
       <div className="wallet-actions-head">
-        <span>{copy.walletPanel.operation}</span>
+        <span>{copy.walletPanel.statusPanel}</span>
         <strong>{drawState}</strong>
-      </div>
-
-      <div className="button-row">
-        <button className="primary shimmer-button" onClick={onConnectWallet} disabled={busy !== null}>
-          {busy === 'connect' ? <Loader2 className="spin" size={18} /> : <Wallet size={18} />}
-          {wallet ? formatAddress(wallet.address) : copy.walletPanel.connectBsc}
-        </button>
-        <button onClick={onRefreshStatus} disabled={busy !== null || !wallet}>
-          {busy === 'read' ? <Loader2 className="spin" size={18} /> : <Database size={18} />}
-          {copy.walletPanel.read}
-        </button>
-        <button onClick={onFinalizeLedger} disabled={finalizeDisabled}>
-          {busy === 'finalize' ? <Loader2 className="spin" size={18} /> : <LockKeyhole size={18} />}
-          {isLedgerCurrent ? copy.walletPanel.ledgerCurrent : copy.walletPanel.finalizeLedger}
-        </button>
-        <button
-          className="wallet-reset-button"
-          onClick={() => {
-            if (!window.confirm(copy.walletPanel.resetConfirm)) return
-            onResetRound()
-          }}
-          disabled={resetDisabled}
-        >
-          {busy === 'reset' ? <Loader2 className="spin" size={18} /> : <RotateCcw size={18} />}
-          {copy.walletPanel.resetRound}
-        </button>
       </div>
 
       {wallet ? (
@@ -157,10 +139,6 @@ export function WalletPanel({
 
       {wallet && status && !isContractOwner && status.state !== 2 && (
         <p className="message wallet-warning-message">{copy.walletPanel.ownerOnlyAction}</p>
-      )}
-
-      {status?.state === 2 && (
-        <p className="message wallet-warning-message">{copy.walletPanel.resetBlockedDuringRequest}</p>
       )}
 
       {status && (
@@ -212,10 +190,38 @@ export function WalletPanel({
         <p className="message wallet-warning-message">{copy.drawReveal.selectableOrderUnavailable}</p>
       )}
 
+      {vrfSubscription && (
+        <div className={`wallet-vrf-panel ${hasVrfFundingIssue ? 'is-warning' : ''}`}>
+          <span>{copy.walletPanel.vrfSubscription}</span>
+          <div>
+            <strong>{copy.walletPanel.vrfBalance}</strong>
+            <small>{vrfBalanceLabel}</small>
+          </div>
+          <div>
+            <strong>{copy.walletPanel.vrfPendingRequest}</strong>
+            <small>{vrfSubscription.pendingRequestExists ? copy.walletPanel.requested : copy.walletPanel.ready}</small>
+          </div>
+          <div>
+            <strong>{copy.walletPanel.vrfConsumer}</strong>
+            <small>{vrfSubscription.contractIsConsumer ? copy.walletPanel.ready : copy.common.pending}</small>
+          </div>
+          <div>
+            <strong>{copy.walletPanel.vrfRequestCount}</strong>
+            <small>{compactNumber(vrfSubscription.requestCount)}</small>
+          </div>
+          <p>{copy.walletPanel.vrfFeeModel}</p>
+          {hasVrfFundingIssue && <p>{copy.walletPanel.vrfFundingMissing}</p>}
+        </div>
+      )}
+
+      {status?.vrfSubscriptionError && (
+        <p className="message wallet-warning-message">{copy.walletPanel.vrfSubscriptionReadFailed}</p>
+      )}
+
       {status?.winnerTickets.length ? (
         <div className="winner-strip">
           {status.winnerTickets.map((ticket) => (
-            <span key={ticket.toString()}>#{compactNumber(ticket)}</span>
+            <span key={ticket.toString()}>#{formatDrawTicketNumber(ticket, status.totalTickets)}</span>
           ))}
         </div>
       ) : null}
@@ -229,13 +235,29 @@ export function WalletPanel({
           <a href={contractEventsUrl} target="_blank" rel="noreferrer">
             {copy.walletPanel.eventLogs}
           </a>
-          {transactionHashes.map((hash) => (
-            <a href={`${explorerBaseUrl}/tx/${hash}`} target="_blank" rel="noreferrer" key={hash}>
-              {hash.slice(0, 10)}...
+        </div>
+      </div>
+
+      {transactionRecords.length > 0 && (
+        <div className="wallet-transaction-log">
+          <span>{copy.walletPanel.transactionTimeline}</span>
+          {transactionRecords.map((record) => (
+            <a
+              className={`wallet-transaction-row is-${record.status}`}
+              href={record.hash ? `${explorerBaseUrl}/tx/${record.hash}` : undefined}
+              target="_blank"
+              rel="noreferrer"
+              key={record.id}
+            >
+              <strong>{transactionKindLabel(record)}</strong>
+              <span>{record.hash ? `${record.hash.slice(0, 10)}...` : copy.walletPanel.txAwaitingSignature}</span>
+              <small>
+                {transactionStatusLabel(record)} · {transactionDuration(record, clockNow || record.confirmedAt || record.submittedAt || record.startedAt)}
+              </small>
             </a>
           ))}
         </div>
-      </div>
+      )}
 
       {message && <p className="message">{message}</p>}
     </section>

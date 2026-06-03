@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {VRFConsumerBaseV2Plus} from "@chainlink/contracts/src/v0.8/vrf/dev/VRFConsumerBaseV2Plus.sol";
-import {VRFV2PlusClient} from "@chainlink/contracts/src/v0.8/vrf/dev/libraries/VRFV2PlusClient.sol";
+import {VRFConsumerBase} from "./oracle/VRFConsumerBase.sol";
+import {VRFCoordinatorInterface} from "./oracle/VRFCoordinatorInterface.sol";
 
-contract RenaissLuckyDraw is VRFConsumerBaseV2Plus {
+contract RenaissLuckyDraw is VRFConsumerBase {
     enum DrawState {
         Draft,
         LedgerFinalized,
@@ -15,13 +15,15 @@ contract RenaissLuckyDraw is VRFConsumerBaseV2Plus {
 
     struct VrfConfig {
         bytes32 keyHash;
-        uint256 subscriptionId;
+        uint64 subscriptionId;
         uint16 requestConfirmations;
         uint32 callbackGasLimit;
-        bool nativePayment;
     }
 
     address public drawOperator;
+    address public immutable vrfCoordinatorAddress;
+    address private s_owner;
+    address private s_pendingOwner;
     VrfConfig public vrfConfig;
     bytes32 public ledgerHash;
     string public ledgerUri;
@@ -42,8 +44,7 @@ contract RenaissLuckyDraw is VRFConsumerBaseV2Plus {
         bytes32 indexed keyHash,
         uint256 indexed subscriptionId,
         uint16 requestConfirmations,
-        uint32 callbackGasLimit,
-        bool nativePayment
+        uint32 callbackGasLimit
     );
     event LedgerFinalized(bytes32 indexed ledgerHash, uint256 totalTickets, uint256 prizeSlotCount, string ledgerUri);
     event DrawRequested(uint256 indexed requestId, address indexed caller);
@@ -52,6 +53,8 @@ contract RenaissLuckyDraw is VRFConsumerBaseV2Plus {
     event PrizeWinnerDrawn(uint256 indexed revealIndex, uint256 indexed prizeSlotIndex, uint256 ticketNumber);
     event DrawFulfilled(uint256 indexed requestId, uint256 randomWord, uint256[] winnerTickets);
     event RoundReset();
+    event OwnershipTransferRequested(address indexed from, address indexed to);
+    event OwnershipTransferred(address indexed from, address indexed to);
 
     error NotDrawOperator();
     error InvalidAddress();
@@ -60,25 +63,56 @@ contract RenaissLuckyDraw is VRFConsumerBaseV2Plus {
     error InvalidPrizeSlots();
     error InvalidRequest();
     error InvalidVrfConfig();
+    error NotOwner();
 
     modifier onlyDrawOperator() {
         if (msg.sender != owner() && msg.sender != drawOperator) revert NotDrawOperator();
         _;
     }
 
+    modifier onlyOwner() {
+        if (msg.sender != s_owner) revert NotOwner();
+        _;
+    }
+
     constructor(
         address vrfCoordinator,
         bytes32 keyHash,
-        uint256 subscriptionId,
+        uint64 subscriptionId,
         uint16 requestConfirmations,
         uint32 callbackGasLimit,
-        bool nativePayment,
         uint256 initialPrizeSlotCount
-    ) VRFConsumerBaseV2Plus(vrfCoordinator) {
+    ) VRFConsumerBase(vrfCoordinator) {
+        if (vrfCoordinator == address(0)) revert InvalidAddress();
+        vrfCoordinatorAddress = vrfCoordinator;
+        s_owner = msg.sender;
         drawOperator = msg.sender;
-        _setVrfConfig(keyHash, subscriptionId, requestConfirmations, callbackGasLimit, nativePayment);
+        _setVrfConfig(keyHash, subscriptionId, requestConfirmations, callbackGasLimit);
         _setPrizeSlotCount(initialPrizeSlotCount);
+        emit OwnershipTransferred(address(0), msg.sender);
         emit DrawOperatorChanged(msg.sender);
+    }
+
+    function owner() public view returns (address) {
+        return s_owner;
+    }
+
+    function pendingOwner() external view returns (address) {
+        return s_pendingOwner;
+    }
+
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert InvalidAddress();
+        s_pendingOwner = newOwner;
+        emit OwnershipTransferRequested(s_owner, newOwner);
+    }
+
+    function acceptOwnership() external {
+        if (msg.sender != s_pendingOwner) revert InvalidAddress();
+        address previousOwner = s_owner;
+        s_owner = msg.sender;
+        s_pendingOwner = address(0);
+        emit OwnershipTransferred(previousOwner, msg.sender);
     }
 
     function setDrawOperator(address operator) external onlyOwner {
@@ -89,13 +123,12 @@ contract RenaissLuckyDraw is VRFConsumerBaseV2Plus {
 
     function setVrfConfig(
         bytes32 keyHash,
-        uint256 subscriptionId,
+        uint64 subscriptionId,
         uint16 requestConfirmations,
-        uint32 callbackGasLimit,
-        bool nativePayment
+        uint32 callbackGasLimit
     ) external onlyOwner {
         if (state == DrawState.RandomnessRequested) revert InvalidState();
-        _setVrfConfig(keyHash, subscriptionId, requestConfirmations, callbackGasLimit, nativePayment);
+        _setVrfConfig(keyHash, subscriptionId, requestConfirmations, callbackGasLimit);
     }
 
     function finalizeLedger(
@@ -138,24 +171,19 @@ contract RenaissLuckyDraw is VRFConsumerBaseV2Plus {
             revert InvalidVrfConfig();
         }
 
-        VRFV2PlusClient.RandomWordsRequest memory req = VRFV2PlusClient.RandomWordsRequest({
-            keyHash: config.keyHash,
-            subId: config.subscriptionId,
-            requestConfirmations: config.requestConfirmations,
-            callbackGasLimit: config.callbackGasLimit,
-            numWords: 1,
-            extraArgs: VRFV2PlusClient._argsToBytes(
-                VRFV2PlusClient.ExtraArgsV1({nativePayment: config.nativePayment})
-            )
-        });
-
-        newRequestId = s_vrfCoordinator.requestRandomWords(req);
+        newRequestId = VRFCoordinatorInterface(vrfCoordinatorAddress).requestRandomWords(
+            config.keyHash,
+            config.subscriptionId,
+            config.requestConfirmations,
+            config.callbackGasLimit,
+            1
+        );
         requestId = newRequestId;
         state = DrawState.RandomnessRequested;
         emit DrawRequested(newRequestId, msg.sender);
     }
 
-    function fulfillRandomWords(uint256 fulfilledRequestId, uint256[] calldata randomWords) internal override {
+    function fulfillRandomWords(uint256 fulfilledRequestId, uint256[] memory randomWords) internal override {
         if (state != DrawState.RandomnessRequested || fulfilledRequestId != requestId) revert InvalidRequest();
         if (randomWords.length == 0) revert InvalidRequest();
 
@@ -309,20 +337,18 @@ contract RenaissLuckyDraw is VRFConsumerBaseV2Plus {
 
     function _setVrfConfig(
         bytes32 keyHash,
-        uint256 subscriptionId,
+        uint64 subscriptionId,
         uint16 requestConfirmations,
-        uint32 callbackGasLimit,
-        bool nativePayment
+        uint32 callbackGasLimit
     ) internal {
         if (keyHash == bytes32(0) || subscriptionId == 0 || callbackGasLimit == 0) revert InvalidVrfConfig();
         vrfConfig = VrfConfig({
             keyHash: keyHash,
             subscriptionId: subscriptionId,
             requestConfirmations: requestConfirmations,
-            callbackGasLimit: callbackGasLimit,
-            nativePayment: nativePayment
+            callbackGasLimit: callbackGasLimit
         });
-        emit VrfConfigUpdated(keyHash, subscriptionId, requestConfirmations, callbackGasLimit, nativePayment);
+        emit VrfConfigUpdated(keyHash, subscriptionId, requestConfirmations, callbackGasLimit);
     }
 
     function _setPrizeSlotCount(uint256 newPrizeSlotCount) internal {
