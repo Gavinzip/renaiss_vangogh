@@ -2,7 +2,7 @@
   padding: 0 0 3.5rem;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(247, 251, 255, 0.92)),
-    url("../assets/van-gogh-starry-hero-bg.webp") center top / cover fixed no-repeat;
+    url("../assets/van-gogh-starry-hero-bg.webp") center top / cover no-repeat;
 }
 
 .page-rules .rules-gallery-page {
@@ -103,8 +103,30 @@
   box-shadow:
     0 22px 54px rgba(25, 55, 98, 0.11),
     inset 0 1px 0 rgba(255, 255, 255, 0.94);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
+}
+
+.page-rules .rules-sbt-tier-card.tier-rainbow {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(226, 242, 255, 0.88)),
+    linear-gradient(120deg, rgba(49, 100, 255, 0.18), rgba(255, 159, 82, 0.14));
+}
+
+.page-rules .rules-sbt-tier-card.tier-gold {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(255, 248, 224, 0.9)),
+    linear-gradient(120deg, rgba(245, 183, 75, 0.2), rgba(255, 255, 255, 0));
+}
+
+.page-rules .rules-sbt-tier-card.tier-silver {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(234, 241, 249, 0.9)),
+    linear-gradient(120deg, rgba(146, 161, 181, 0.16), rgba(255, 255, 255, 0));
+}
+
+.page-rules .rules-sbt-tier-card.tier-brown {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(252, 240, 218, 0.9)),
+    linear-gradient(120deg, rgba(161, 102, 42, 0.15), rgba(255, 255, 255, 0));
 }
 
 .page-rules .rules-sbt-tier-card::after {
@@ -194,6 +216,11 @@
 .page-rules .rules-detail-card {
   border-color: rgba(255, 255, 255, 0.82);
   border-radius: 20px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(240, 248, 255, 0.86)),
+    linear-gradient(105deg, rgba(255, 211, 137, 0.1), rgba(72, 184, 255, 0.1));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .page-rules .rules-process-card {

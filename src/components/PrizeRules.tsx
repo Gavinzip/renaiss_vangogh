@@ -35,7 +35,17 @@ export function PrizeRules({ copy }: { copy: AppCopy }) {
         <div className="rules-sbt-hero-grid">
           {SBT_TIERS.map((tier) => (
             <article className={`rules-sbt-tier-card tier-${tier.tier}`} key={tier.tier}>
-              {SBT_TIER_IMAGES[tier.tier] && <img src={SBT_TIER_IMAGES[tier.tier]} alt="" decoding="async" loading="lazy" />}
+              {SBT_TIER_IMAGES[tier.tier] && (
+                <img
+                  src={SBT_TIER_IMAGES[tier.tier]}
+                  alt=""
+                  width="320"
+                  height="320"
+                  decoding="async"
+                  loading="eager"
+                  fetchPriority="high"
+                />
+              )}
               <div>
                 <strong>{copy.sbt.tiers[tier.tier]}</strong>
                 <span>

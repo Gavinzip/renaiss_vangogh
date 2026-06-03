@@ -164,6 +164,16 @@ function draftDrawStatusFrom(status: DrawStatus): DrawStatus {
   })
 }
 
+function pageFromHash(hash: string): PageKey | null {
+  const key = hash.replace(/^#/, '')
+  return PUBLIC_NAV_ITEMS.includes(key as PageKey) || key === 'draw' ? (key as PageKey) : null
+}
+
+function initialPageFromLocation(): PageKey {
+  if (typeof window === 'undefined') return 'tickets'
+  return pageFromHash(window.location.hash) ?? 'tickets'
+}
+
 export default function App() {
   const [ledger, setLedger] = useState<RaffleLedger | null>(null)
   const [fullLedger, setFullLedger] = useState<RaffleLedger | null>(null)
@@ -171,7 +181,7 @@ export default function App() {
   const [fullLedgerError, setFullLedgerError] = useState('')
   const [query, setQuery] = useState('')
   const [selectedEntry, setSelectedEntry] = useState<RaffleEntry | null>(null)
-  const [page, setPage] = useState<PageKey>('tickets')
+  const [page, setPage] = useState<PageKey>(() => initialPageFromLocation())
   const [wallet, setWallet] = useState<ConnectedWallet | null>(null)
   const [walletError, setWalletError] = useState('')
   const [drawRunMode, setDrawRunMode] = useState<DrawRunMode>('showcase')
@@ -316,6 +326,21 @@ export default function App() {
   }, [activePage])
 
   useEffect(() => {
+    const syncPageFromHash = () => {
+      const nextPage = pageFromHash(window.location.hash)
+      if (nextPage) setPage(nextPage)
+    }
+
+    window.addEventListener('hashchange', syncPageFromHash)
+    window.addEventListener('popstate', syncPageFromHash)
+
+    return () => {
+      window.removeEventListener('hashchange', syncPageFromHash)
+      window.removeEventListener('popstate', syncPageFromHash)
+    }
+  }, [])
+
+  useEffect(() => {
     let alive = true
 
     async function refreshLedger() {
@@ -424,6 +449,9 @@ export default function App() {
   }, [])
 
   function handlePageChange(nextPage: PageKey) {
+    if (window.location.hash !== `#${nextPage}`) {
+      window.history.pushState(null, '', `#${nextPage}`)
+    }
     setPage(nextPage)
     trackEvent('navigation_select', {
       draw_unlocked: drawUnlocked,
