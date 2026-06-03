@@ -156,6 +156,7 @@ export function DrawReveal({
   const [demoResults, setDemoResults] = useState<DrawWinnerResult[]>([])
   const [revealedContractResults, setRevealedContractResults] = useState<DrawWinnerResult[]>([])
   const [currentReveal, setCurrentReveal] = useState<DrawWinnerResult | null>(null)
+  const [currentBatchReveal, setCurrentBatchReveal] = useState<DrawWinnerResult[]>([])
   const [isSequenceRunning, setIsSequenceRunning] = useState(false)
   const [sequenceMessage, setSequenceMessage] = useState('')
   const [videoReady, setVideoReady] = useState(false)
@@ -235,8 +236,10 @@ export function DrawReveal({
   const canRevealExistingSelection = !isLiveRunMode && selectedRemainingSlots.length === 0 && selectedExistingRevealResults.length > 0
   const selectedRunCount = canRevealExistingSelection ? selectedExistingRevealResults.length : selectedDrawCount
   const storedSelectedReveal = selectedGroupResults[selectedGroupResults.length - 1] ?? visibleResults[visibleResults.length - 1] ?? null
+  const activeBatchReveal = currentBatchReveal.length > 1 ? currentBatchReveal : []
+  const isBatchReveal = activeBatchReveal.length > 1
   const activeCurrentReveal = currentReveal
-  const activeReveal = activeCurrentReveal ?? storedSelectedReveal
+  const activeReveal = isBatchReveal ? null : activeCurrentReveal ?? storedSelectedReveal
   const winnerTicket = activeReveal?.ticket ?? null
   const rawTicketNumber = winnerTicket ?? ''
   const ticketNumber = winnerTicket ? formatDrawTicketNumber(winnerTicket, totalTickets) : ''
@@ -245,25 +248,34 @@ export function DrawReveal({
   const hasTicketNumber = winnerTicket !== null
   const revealedDigitCount = digitRevealState.ticketNumber === ticketNumber ? digitRevealState.count : activeCurrentReveal ? 0 : ticketDigits.length
   const isRevealComplete = !hasTicketNumber || revealedDigitCount >= ticketDigits.length
+  const canAdvanceRevealDigits = phase === 'reveal' && !isBatchReveal && hasTicketNumber && !isRevealComplete
   const isAllComplete = visibleResults.length >= TOTAL_PRIZE_DRAW_SLOTS
-  const candidateSnapshot = buildWinnerCandidateSnapshot({
-    winnerTicket: rawTicketNumber ? BigInt(rawTicketNumber) : null,
-    revealedDigitCount,
-    ledger,
-    identities: walletIdentities,
-  })
+  const candidateSnapshot = isBatchReveal
+    ? null
+    : buildWinnerCandidateSnapshot({
+        winnerTicket: rawTicketNumber ? BigInt(rawTicketNumber) : null,
+        revealedDigitCount,
+        ledger,
+        identities: walletIdentities,
+      })
   const visibleCandidates = candidateSnapshot?.visibleCandidates ?? []
   const leadCandidate = visibleCandidates[0] ?? null
   const otherCandidates = visibleCandidates.slice(1)
   const maxCandidateTickets = leadCandidate?.matchingTickets ?? 1
-  const statusLabel = activeReveal
+  const batchRevealLabel = isBatchReveal ? `${prizeLabels[activeBatchReveal[0].prizeGroupId]} x ${activeBatchReveal.length}` : ''
+  const batchGridClassName =
+    activeBatchReveal.length <= 4 ? 'is-small-batch' : activeBatchReveal.length <= 6 ? 'is-medium-batch' : 'is-large-batch'
+  const activeDisplaySource = activeBatchReveal[0]?.source ?? resultSource
+  const statusLabel = isBatchReveal
+    ? batchRevealLabel
+    : activeReveal
     ? `${prizeLabels[activeReveal.prizeGroupId]} #${activeReveal.prizeOrdinal}`
     : resultSource === 'demo'
       ? copy.drawReveal.demoLabel
       : resultSource === 'contract'
         ? copy.drawReveal.winningLabel
         : copy.drawReveal.readyState
-  const statusCopy = resultSource === 'demo' ? copy.drawReveal.demoNotice : resultSource === 'contract' ? copy.drawReveal.verified : copy.drawReveal.readyCopy
+  const statusCopy = activeDisplaySource === 'demo' ? copy.drawReveal.demoNotice : activeDisplaySource === 'contract' ? copy.drawReveal.verified : copy.drawReveal.readyCopy
   const shouldConnectBeforeRun = isLiveRunMode && !hasWallet
   const isWaitingForContractRandomness = Boolean(isLiveRunMode && drawStatus?.requested && drawStatus.state < 3 && !drawStatus.fulfilled)
   const isIntroVideoBlocked = !videoReady || videoLoadError
@@ -515,6 +527,7 @@ export function DrawReveal({
   function primeRevealResult(result: DrawWinnerResult) {
     const number = formatDrawTicketNumber(result.ticket, totalTickets)
     previousRevealedDigitCountRef.current = 0
+    setCurrentBatchReveal([])
     setCurrentReveal(result)
     setDigitRevealState({ ticketNumber: number, count: 0 })
   }
@@ -525,25 +538,61 @@ export function DrawReveal({
     centerRevealStage()
   }
 
-  async function revealResults(results: DrawWinnerResult[], playIntro = true) {
-    for (let index = 0; index < results.length; index += 1) {
-      const result = results[index]
-      if (index === 0 && playIntro) {
-        const didPlayVideo = await playVideoClip()
-        if (!didPlayVideo && result.source === 'contract') {
-          await revealTicketDigits(result)
+  function primeBatchRevealResults(results: DrawWinnerResult[]) {
+    previousRevealedDigitCountRef.current = 0
+    setCurrentReveal(null)
+    setCurrentBatchReveal(results)
+    setDigitRevealState({ ticketNumber: '', count: 0 })
+    setPhase('reveal')
+    centerRevealStage()
+  }
+
+  function appendRevealedResults(results: DrawWinnerResult[]) {
+    const demoReveals = results.filter((result) => result.source === 'demo')
+    const contractReveals = results.filter((result) => result.source === 'contract')
+
+    if (demoReveals.length > 0) {
+      setDemoResults((current) => {
+        const nextResults = [...current]
+        for (const result of demoReveals) {
+          if (!nextResults.some((item) => item.slotIndex === result.slotIndex)) {
+            nextResults.push(result)
+          }
         }
-        if (!didPlayVideo) return false
-      }
-      await revealTicketDigits(result)
-      if (result.source === 'demo') {
-        setDemoResults((current) => (current.some((item) => item.slotIndex === result.slotIndex) ? current : [...current, result].sort((a, b) => a.slotIndex - b.slotIndex)))
-      }
-      if (result.source === 'contract') {
-        setRevealedContractResults((current) => (current.some((item) => item.slotIndex === result.slotIndex) ? current : [...current, result]))
-      }
-      await wait(index === results.length - 1 ? 760 : 240)
+        return nextResults.sort((a, b) => a.slotIndex - b.slotIndex)
+      })
     }
+
+    if (contractReveals.length > 0) {
+      setRevealedContractResults((current) => {
+        const nextResults = [...current]
+        for (const result of contractReveals) {
+          if (!nextResults.some((item) => item.slotIndex === result.slotIndex)) {
+            nextResults.push(result)
+          }
+        }
+        return nextResults
+      })
+    }
+  }
+
+  async function revealResults(results: DrawWinnerResult[], playIntro = true) {
+    if (results.length === 0) return false
+
+    if (playIntro) {
+      const didPlayVideo = await playVideoClip()
+      if (!didPlayVideo) return false
+    }
+
+    if (results.length > 1) {
+      primeBatchRevealResults(results)
+      appendRevealedResults(results)
+      return true
+    }
+
+    await revealTicketDigits(results[0])
+    appendRevealedResults(results)
+    await wait(760)
     return true
   }
 
@@ -640,6 +689,7 @@ export function DrawReveal({
     if (isLiveRunMode) {
       setRevealedContractResults(contractResults)
       setCurrentReveal(null)
+      setCurrentBatchReveal([])
       setDigitRevealState({ ticketNumber: '', count: 0 })
     }
     setIsSequenceRunning(true)
@@ -769,6 +819,7 @@ export function DrawReveal({
     sequenceLockRef.current = true
     setRevealedContractResults(contractResults)
     setCurrentReveal(null)
+    setCurrentBatchReveal([])
     setDigitRevealState({ ticketNumber: '', count: 0 })
     setIsSequenceRunning(true)
     try {
@@ -821,6 +872,7 @@ export function DrawReveal({
     cancelVideoPlaybackWait()
     setDemoResults([])
     setCurrentReveal(null)
+    setCurrentBatchReveal([])
     setDigitRevealState({ ticketNumber: '', count: 0 })
     setSequenceMessage('')
     setPhase('idle')
@@ -847,6 +899,7 @@ export function DrawReveal({
       if (!didReset) return
       setRevealedContractResults([])
       setCurrentReveal(null)
+      setCurrentBatchReveal([])
       setDigitRevealState({ ticketNumber: '', count: 0 })
       setPhase('idle')
       setSelectedPrizeGroupId('grand')
@@ -868,6 +921,7 @@ export function DrawReveal({
     cancelVideoPlaybackWait()
     setRevealedContractResults([])
     setCurrentReveal(null)
+    setCurrentBatchReveal([])
     setDigitRevealState({ ticketNumber: '', count: 0 })
     setSelectedPrizeGroupId('grand')
     setBatchRevealCount(1)
@@ -878,6 +932,7 @@ export function DrawReveal({
     if (nextRunMode === runMode) return
     cancelVideoPlaybackWait()
     setCurrentReveal(null)
+    setCurrentBatchReveal([])
     setDigitRevealState({ ticketNumber: '', count: 0 })
     setSequenceMessage('')
     setRevealedContractResults([])
@@ -917,14 +972,18 @@ export function DrawReveal({
 
     const result = root.querySelector('.draw-reveal-result')
     const ticket = root.querySelector('.draw-reveal-ticket')
+    const batchTickets = root.querySelectorAll('.draw-reveal-batch-ticket')
     const shine = root.querySelector('.draw-reveal-shine')
+    const batchShines = root.querySelectorAll('.draw-reveal-batch-shine')
     const burst = root.querySelector('.draw-reveal-number-burst')
     const digits = root.querySelectorAll('.draw-reveal-digit')
     const meta = root.querySelectorAll('.draw-reveal-meta > *')
 
     if (result) gsap.set(result, { autoAlpha: 0, clearProps: 'transform' })
     if (ticket) gsap.set(ticket, { clearProps: 'all' })
+    if (batchTickets.length) gsap.set(batchTickets, { clearProps: 'all' })
     if (shine) gsap.set(shine, { xPercent: -115, autoAlpha: 0 })
+    if (batchShines.length) gsap.set(batchShines, { xPercent: -115, autoAlpha: 0 })
     if (burst) gsap.set(burst, { autoAlpha: 0, scale: 0.52 })
     if (digits.length) gsap.set(digits, { autoAlpha: 0, y: 48, scale: 2.35, rotationX: -68, filter: 'blur(12px)' })
     if (meta.length) gsap.set(meta, { autoAlpha: 0, y: 12 })
@@ -945,6 +1004,9 @@ export function DrawReveal({
         const duration = reduceMotion ? 0 : 0.82
         const revealStage = root.querySelector('.draw-reveal-result')
         const ticket = root.querySelector('.draw-reveal-ticket')
+        const batchTickets = root.querySelectorAll('.draw-reveal-batch-ticket')
+        const batchNumbers = root.querySelectorAll('.draw-reveal-batch-number')
+        const batchShines = root.querySelectorAll('.draw-reveal-batch-shine')
         const shine = root.querySelector('.draw-reveal-shine')
         const label = root.querySelector('.draw-reveal-number-wrap > span')
         const burst = root.querySelector('.draw-reveal-number-burst')
@@ -952,9 +1014,65 @@ export function DrawReveal({
         const digits = root.querySelectorAll('.draw-reveal-digit')
         const meta = root.querySelectorAll('.draw-reveal-meta > *')
 
-        if (!revealStage || !ticket) return undefined
+        if (!revealStage) return undefined
 
         const timeline = gsap.timeline({ defaults: { ease: 'power3.out', overwrite: 'auto' } })
+
+        if (isBatchReveal && batchTickets.length) {
+          timeline
+            .fromTo(revealStage, { autoAlpha: 0 }, { autoAlpha: 1, duration: duration * 0.45 })
+            .fromTo(
+              batchTickets,
+              {
+                autoAlpha: 0,
+                y: reduceMotion ? 0 : 42,
+                scale: reduceMotion ? 1 : 0.88,
+                rotationX: reduceMotion ? 0 : -8,
+                filter: reduceMotion ? 'blur(0px)' : 'blur(8px)',
+              },
+              {
+                autoAlpha: 1,
+                y: 0,
+                scale: 1,
+                rotationX: 0,
+                filter: 'blur(0px)',
+                duration,
+                stagger: reduceMotion ? 0 : 0.045,
+              },
+              reduceMotion ? 0 : 0.08,
+            )
+
+          if (batchNumbers.length) {
+            timeline.fromTo(
+              batchNumbers,
+              { autoAlpha: 0, y: reduceMotion ? 0 : 12, scale: reduceMotion ? 1 : 0.94 },
+              { autoAlpha: 1, y: 0, scale: 1, duration: reduceMotion ? 0 : 0.32, stagger: reduceMotion ? 0 : 0.035 },
+              reduceMotion ? 0 : 0.34,
+            )
+          }
+
+          if (batchShines.length) {
+            timeline.fromTo(
+              batchShines,
+              { xPercent: -115, autoAlpha: 0 },
+              { xPercent: 115, autoAlpha: 0.64, duration: reduceMotion ? 0 : 1.05, stagger: reduceMotion ? 0 : 0.025, ease: 'power2.inOut' },
+              reduceMotion ? 0 : 0.42,
+            )
+          }
+
+          if (meta.length) {
+            timeline.fromTo(
+              meta,
+              { autoAlpha: 0, y: 12 },
+              { autoAlpha: 1, y: 0, duration: reduceMotion ? 0 : 0.36, stagger: reduceMotion ? 0 : 0.06 },
+              reduceMotion ? 0 : 0.72,
+            )
+          }
+
+          return () => timeline.kill()
+        }
+
+        if (!ticket) return undefined
 
         if (digits.length) {
           timeline
@@ -1030,7 +1148,7 @@ export function DrawReveal({
     )
 
     return () => mm.revert()
-  }, [hasTicketNumber, phase, ticketNumber])
+  }, [activeBatchReveal.length, hasTicketNumber, isBatchReveal, phase, ticketNumber])
 
   useEffect(() => {
     const root = rootRef.current
@@ -1314,12 +1432,12 @@ export function DrawReveal({
       )}
 
       <div
-        className={`draw-reveal-stage draw-reveal-stage--${phase}`}
-        role={phase === 'reveal' && hasTicketNumber && !isRevealComplete ? 'button' : undefined}
-        tabIndex={phase === 'reveal' && hasTicketNumber && !isRevealComplete ? 0 : undefined}
-        aria-label={phase === 'reveal' && hasTicketNumber && !isRevealComplete ? copy.drawReveal.clickNext : undefined}
+        className={`draw-reveal-stage draw-reveal-stage--${phase}${isBatchReveal ? ' draw-reveal-stage--batch' : ''}`}
+        role={canAdvanceRevealDigits ? 'button' : undefined}
+        tabIndex={canAdvanceRevealDigits ? 0 : undefined}
+        aria-label={canAdvanceRevealDigits ? copy.drawReveal.clickNext : undefined}
         onClick={() => {
-          if (phase === 'reveal' && hasTicketNumber && !isRevealComplete) {
+          if (canAdvanceRevealDigits) {
             setDigitRevealState((state) => ({
               ticketNumber,
               count: Math.min(ticketDigits.length, state.ticketNumber === ticketNumber ? state.count + 1 : 1),
@@ -1329,7 +1447,7 @@ export function DrawReveal({
         onKeyDown={(event) => {
           if (event.key !== 'Enter' && event.key !== ' ') return
           event.preventDefault()
-          if (phase === 'reveal' && hasTicketNumber && !isRevealComplete) {
+          if (canAdvanceRevealDigits) {
             setDigitRevealState((state) => ({
               ticketNumber,
               count: Math.min(ticketDigits.length, state.ticketNumber === ticketNumber ? state.count + 1 : 1),
@@ -1349,37 +1467,52 @@ export function DrawReveal({
           onError={markVideoLoadError}
         />
 
-        <div className="draw-reveal-result" aria-live="polite">
-          <div className="draw-reveal-ticket">
-            <img src={goldTicketImage} alt={copy.drawReveal.ticketAlt} decoding="async" />
-            <div className="draw-reveal-shine" aria-hidden="true" />
-            <div className="draw-reveal-number-wrap">
-              <div className="draw-reveal-number-burst" aria-hidden="true" />
-              <span>{statusLabel}</span>
-              {hasTicketNumber ? (
-                <strong aria-label={ticketAriaLabel}>
-                  {hasTicketNumber && <span className="draw-reveal-prefix">#</span>}
-                  {ticketDigits.map((digit, index) => (
-                    <span
-                      className={`draw-reveal-digit ${index < revealedDigitCount ? 'is-visible' : ''}`}
-                      data-digit-index={index}
-                      key={`${ticketNumber}-${index}`}
-                    >
-                      {digit}
-                    </span>
-                  ))}
-                </strong>
-              ) : (
-                <div className="draw-reveal-ready-state" aria-label={ticketAriaLabel}>
-                  <strong>{copy.drawReveal.readyTitle}</strong>
-                  <small>{copy.drawReveal.readyCopy}</small>
-                </div>
-              )}
-              {hasTicketNumber && !isRevealComplete && (
-                <small className="draw-reveal-click-cue">{copy.drawReveal.clickNext}</small>
-              )}
+        <div className={`draw-reveal-result${isBatchReveal ? ' draw-reveal-result--batch' : ''}`} aria-live="polite">
+          {isBatchReveal ? (
+            <div className={`draw-reveal-batch-grid ${batchGridClassName}`}>
+              {activeBatchReveal.map((result) => (
+                <article className="draw-reveal-batch-ticket" key={`${result.source}-${result.slotIndex}-${result.ticket}`}>
+                  <img src={goldTicketImage} alt={copy.drawReveal.ticketAlt} decoding="async" />
+                  <div className="draw-reveal-batch-shine" aria-hidden="true" />
+                  <div className="draw-reveal-batch-number">
+                    <span>{`${prizeLabels[result.prizeGroupId]} #${result.prizeOrdinal}`}</span>
+                    <strong aria-label={`#${formatDrawTicketNumber(result.ticket, totalTickets)}`}>#{formatDrawTicketNumber(result.ticket, totalTickets)}</strong>
+                  </div>
+                </article>
+              ))}
             </div>
-          </div>
+          ) : (
+            <div className="draw-reveal-ticket">
+              <img src={goldTicketImage} alt={copy.drawReveal.ticketAlt} decoding="async" />
+              <div className="draw-reveal-shine" aria-hidden="true" />
+              <div className="draw-reveal-number-wrap">
+                <div className="draw-reveal-number-burst" aria-hidden="true" />
+                <span>{statusLabel}</span>
+                {hasTicketNumber ? (
+                  <strong aria-label={ticketAriaLabel}>
+                    {hasTicketNumber && <span className="draw-reveal-prefix">#</span>}
+                    {ticketDigits.map((digit, index) => (
+                      <span
+                        className={`draw-reveal-digit ${index < revealedDigitCount ? 'is-visible' : ''}`}
+                        data-digit-index={index}
+                        key={`${ticketNumber}-${index}`}
+                      >
+                        {digit}
+                      </span>
+                    ))}
+                  </strong>
+                ) : (
+                  <div className="draw-reveal-ready-state" aria-label={ticketAriaLabel}>
+                    <strong>{copy.drawReveal.readyTitle}</strong>
+                    <small>{copy.drawReveal.readyCopy}</small>
+                  </div>
+                )}
+                {hasTicketNumber && !isRevealComplete && (
+                  <small className="draw-reveal-click-cue">{copy.drawReveal.clickNext}</small>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="draw-reveal-meta">
             <span>
@@ -1390,7 +1523,7 @@ export function DrawReveal({
         </div>
       </div>
 
-      {phase === 'reveal' && hasTicketNumber && (
+      {phase === 'reveal' && hasTicketNumber && !isBatchReveal && (
         <section className={`draw-reveal-candidates ${candidateSnapshot ? 'draw-reveal-candidates--active' : 'draw-reveal-candidates--idle'}`} aria-live="polite">
           <div className="draw-reveal-candidate-head">
             <div>

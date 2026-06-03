@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Loader2, ShieldCheck, Trophy } from 'lucide-react'
 import './App.css'
 import './styles/raffle-foundation.css'
@@ -1274,17 +1274,23 @@ export default function App() {
             </a>
             <nav className="nav-links nav-inline-links" aria-label="Lucky draw pages">
               {visibleNavItems.map((key) => (
-                <a
-                  className={activePage === key ? 'active' : ''}
-                  href={`#${key}`}
-                  key={key}
-                  onClick={(event) => {
-                    event.preventDefault()
-                    handlePageChange(key)
-                  }}
-                >
-                  {copy.nav[key]}
-                </a>
+                <Fragment key={key}>
+                  <a
+                    className={activePage === key ? 'active' : ''}
+                    href={`#${key}`}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      handlePageChange(key)
+                    }}
+                  >
+                    {copy.nav[key]}
+                  </a>
+                  {key === 'simulator' && (
+                    <span className="nav-coming-soon" aria-disabled="true">
+                      {copy.nav.comingSoon}
+                    </span>
+                  )}
+                </Fragment>
               ))}
             </nav>
             <div className="nav-visible-actions">
