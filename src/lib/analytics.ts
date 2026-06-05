@@ -1,5 +1,3 @@
-const GA_MEASUREMENT_ID = 'G-ES5MKRKKVQ'
-const GA_SCRIPT_ID = 'renaiss-vangogh-ga'
 const TRACKED_HOSTS = new Set(['renaiss-vangogh.zeabur.app'])
 
 type AnalyticsParamValue = string | number | boolean | null | undefined
@@ -46,20 +44,6 @@ export function initializeAnalytics() {
 
   analyticsInitialized = true
   window.dataLayer = window.dataLayer ?? []
-  window.gtag = (...args: unknown[]) => {
-    window.dataLayer?.push(args)
-  }
-
-  window.gtag('js', new Date())
-  window.gtag('config', GA_MEASUREMENT_ID, { send_page_view: false })
-
-  if (!document.getElementById(GA_SCRIPT_ID)) {
-    const script = document.createElement('script')
-    script.id = GA_SCRIPT_ID
-    script.async = true
-    script.src = `https://www.googletagmanager.com/gtag/js?id=${GA_MEASUREMENT_ID}`
-    document.head.appendChild(script)
-  }
 
   return true
 }
