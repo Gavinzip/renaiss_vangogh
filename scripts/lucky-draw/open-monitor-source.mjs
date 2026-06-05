@@ -1,11 +1,13 @@
 import {
   CAMPAIGN_END,
   CAMPAIGN_START,
-  LEGACY_PACK_IDS,
   OPEN_MONITOR_URL,
-  PACK_CONTRACTS,
-  PACK_WEIGHTS,
   RENAISS_ACTIVITY_URL,
+  describePackEventSources,
+  getLegacyPackIds,
+  getPackContracts,
+  getPackEventSources,
+  getPackWeights,
 } from './rules.mjs'
 import { normalizeAddress, normalizeHash, sleep, toNumber } from './utils.mjs'
 
@@ -43,18 +45,19 @@ export async function loadOpenMonitorCandidates() {
   }
 }
 
-function packFromActivity(activity) {
+function packFromActivity(activity, lookups) {
   const packId = String(activity.packId || activity.item?.packId || '').trim().toLowerCase()
-  if (packId && LEGACY_PACK_IDS[packId]) return LEGACY_PACK_IDS[packId]
+  if (packId && lookups.legacyPackIds[packId]) return lookups.legacyPackIds[packId]
 
   const name = String(activity.item?.name || activity.itemName || '').toLowerCase()
   if (name.includes('omega')) return 'omega'
   if (name.includes('eden')) return 'eden'
   if (name.includes('costume')) return 'costume-pack'
   if (name.includes('magma')) return 'magma'
+  if (name.includes('starry')) return 'starry-pack'
 
   const contract = normalizeAddress(activity.contractAddress)
-  if (contract && PACK_CONTRACTS[contract]) return PACK_CONTRACTS[contract].pack
+  if (contract && lookups.packContracts[contract]) return lookups.packContracts[contract].pack
   return null
 }
 
@@ -88,6 +91,12 @@ async function fetchActivities(address, pageSize) {
 export async function scanOpenMonitorCandidateEvents(candidates, args) {
   const allEvents = []
   let index = 0
+  const packEventSources = getPackEventSources(args.extraLegacyPacksRaw)
+  const lookups = {
+    legacyPackIds: getLegacyPackIds(packEventSources),
+    packContracts: getPackContracts(packEventSources),
+    packWeights: getPackWeights(packEventSources),
+  }
 
   for (const candidate of candidates) {
     index += 1
@@ -97,11 +106,12 @@ export async function scanOpenMonitorCandidateEvents(candidates, args) {
         if (activity.__typename !== 'PerpetualBuybackActivity') continue
         const timestamp = toNumber(activity.timestamp)
         if (timestamp < CAMPAIGN_START || timestamp > CAMPAIGN_END) continue
-        const pack = packFromActivity(activity)
+        const pack = packFromActivity(activity, lookups)
         if (!pack) continue
         const txHash = normalizeHash(activity.txHash)
         if (!txHash) continue
-        const ticketWeight = PACK_WEIGHTS[pack]
+        const ticketWeight = lookups.packWeights[pack]
+        if (!ticketWeight) continue
         allEvents.push({
           id: String(activity.id || `${txHash}-${activity.ordinal || activity.nftTokenId || index}`),
           canonicalAddress: candidate.canonical,
@@ -131,6 +141,7 @@ export async function scanOpenMonitorCandidateEvents(candidates, args) {
     source: {
       mode: 'open-monitor-candidate-activities',
       sourceEntries: candidates.length,
+      packEventSources: describePackEventSources(packEventSources),
     },
   }
 }

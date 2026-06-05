@@ -1,7 +1,7 @@
 import { createRenaissActivityFetcher } from './activity-source.mjs'
 import { blockByTimestamp, fetchLogsWindow } from './bscscan.mjs'
 import { readJsonCache, writeJsonCache } from './cache.mjs'
-import { CAMPAIGN_END, CAMPAIGN_START, PACK_EVENT_SOURCES } from './rules.mjs'
+import { CAMPAIGN_END, CAMPAIGN_START, describePackEventSources, getPackEventSources } from './rules.mjs'
 import {
   hexToBigIntText,
   mapWithConcurrency,
@@ -21,7 +21,9 @@ function sourceCacheKey(source) {
     source.topic2 || '',
     source.topic3 || '',
     source.pack,
+    source.label,
     source.ticketWeight,
+    source.buybackContract || '',
     source.eventKind === 'legacy-pack-open' ? 'checkout-v2' : '',
     CAMPAIGN_START,
     CAMPAIGN_END,
@@ -122,10 +124,13 @@ function decodeTicketEventLog(log, contractConfig) {
   return decodeBuybackEventLog(log, contractConfig)
 }
 
-function buybackActivityFromRows(rows) {
+function buybackActivityFromRows(rows, contractConfig) {
   const byCheckoutId = new Map()
+  const expectedBuybackContract = normalizeAddress(contractConfig.buybackContract)
   for (const activity of rows) {
     if (!BUYBACK_ACTIVITY_TYPES.has(activity?.__typename)) continue
+    const activityContract = normalizeAddress(activity.contractAddress)
+    if (expectedBuybackContract && activityContract !== expectedBuybackContract) continue
     const checkoutId = normalizeHash(activity.checkoutId)
     const txHash = normalizeHash(activity.txHash)
     const timestamp = toNumber(activity.timestamp)
@@ -139,7 +144,7 @@ function buybackActivityFromRows(rows) {
   return byCheckoutId
 }
 
-async function matchLegacyBuybackEvents(openEvents, args, activityFetcher) {
+async function matchLegacyBuybackEvents(openEvents, args, activityFetcher, contractConfig) {
   if (!openEvents.length) {
     return {
       events: [],
@@ -154,7 +159,7 @@ async function matchLegacyBuybackEvents(openEvents, args, activityFetcher) {
   const byAddress = new Map()
   await mapWithConcurrency(sourceAddresses, Math.max(1, Math.min(4, args.resolveConcurrency)), async (address) => {
     const rows = await activityFetcher.fetchActivities(address)
-    byAddress.set(address, buybackActivityFromRows(rows))
+    byAddress.set(address, buybackActivityFromRows(rows, contractConfig))
   })
 
   const matchedEvents = []
@@ -221,7 +226,8 @@ export async function scanOnchainTicketEvents(args) {
   const windowEndTs = Math.min(CAMPAIGN_END, nowTs)
   const fromBlock = args.fromBlock || (await blockByTimestamp(bscscanConfig, CAMPAIGN_START, 'after'))
   const toBlock = args.toBlock || (await blockByTimestamp(bscscanConfig, windowEndTs, 'before'))
-  const contracts = PACK_EVENT_SOURCES.filter(
+  const packEventSources = getPackEventSources(args.extraLegacyPacksRaw)
+  const contracts = packEventSources.filter(
     (source) => !args.contracts.length || args.contracts.includes(source.contract),
   )
 
@@ -323,7 +329,7 @@ export async function scanOnchainTicketEvents(args) {
 
     const legacyMatch =
       contract.eventKind === 'legacy-pack-open'
-        ? await matchLegacyBuybackEvents(sourceEvents, args, activityFetcher)
+        ? await matchLegacyBuybackEvents(sourceEvents, args, activityFetcher, contract)
         : null
     const ledgerEvents = legacyMatch ? legacyMatch.events : sourceEvents
     allEvents.push(...ledgerEvents)
@@ -333,6 +339,9 @@ export async function scanOnchainTicketEvents(args) {
       label: contract.label,
       pack: contract.pack,
       eventKind: contract.eventKind,
+      packId: contract.packId || contract.topic2 || null,
+      buybackContract: contract.buybackContract || null,
+      configSource: contract.configSource || 'built-in',
       calls,
       events: ledgerEvents.length,
       openEvents: legacyMatch ? sourceEvents.length : undefined,
@@ -358,6 +367,7 @@ export async function scanOnchainTicketEvents(args) {
       mode: 'contract-events',
       fromBlock,
       toBlock,
+      packEventSources: describePackEventSources(contracts),
       contracts: scanStats,
     },
   }

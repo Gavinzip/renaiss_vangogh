@@ -9,7 +9,7 @@ import type { AppCopy, LanguageCode } from '../lib/i18n'
 import { packLabel } from '../lib/i18n'
 import { anyPrizeProbability, compactNumber, intervalLabel, percent, probability } from '../lib/ticketing/display'
 import type { IdentitySuggestion, IdentitySuggestionKind, WalletIdentityMap } from '../lib/ticketing/identities'
-import { formatAddress, formatTicketRange, PACK_LABELS, PACK_WEIGHTS } from '../lib/ticketing/rules'
+import { formatAddress, formatTicketRange, packDisplayRows } from '../lib/ticketing/rules'
 import type { RaffleEntry, RaffleLeaderboardEntry, RaffleLedger, SbtTier, TicketInterval } from '../lib/ticketing/types'
 import { HoloPrizeCard } from './HoloPrizeCard'
 import { RollingReveal } from './RollingReveal'
@@ -69,9 +69,9 @@ function bscTxUrl(txHash: string): string {
   return `https://bscscan.com/tx/${encodeURIComponent(txHash)}`
 }
 
-function intervalEventText(interval: TicketInterval, copy: AppCopy): string {
+function intervalEventText(interval: TicketInterval, copy: AppCopy, ledger: RaffleLedger): string {
   if (!interval.pack) return copy.ticketHome.bonus
-  return `${packLabel(interval.pack, copy)} ${copy.ticketHome.buybackSuffix}`
+  return `${packLabel(interval.pack, copy, ledger)} ${copy.ticketHome.buybackSuffix}`
 }
 
 async function writeClipboardText(text: string): Promise<void> {
@@ -549,7 +549,7 @@ export function TicketHome({
       .map((interval) => {
         const lines = [
           intervalLabel(interval),
-          intervalEventText(interval, copy),
+          intervalEventText(interval, copy, ledger),
           interval.namespace === 'bonus'
             ? `${copy.ticketHome.globalDrawNumber}: ${formatTicketRange(interval.start, interval.end)}`
             : '',
@@ -829,7 +829,7 @@ export function TicketHome({
                           <div>
                             <strong>{intervalLabel(interval)}</strong>
                             <span>
-                              {intervalEventText(interval, copy)}
+                              {intervalEventText(interval, copy, ledger)}
                               {interval.txHash && (
                                 <>
                                   {' · '}
@@ -869,7 +869,7 @@ export function TicketHome({
                           <div>
                             <strong>{intervalLabel(interval)}</strong>
                             <span>
-                              {intervalEventText(interval, copy)} · {copy.ticketHome.globalDrawNumber}{' '}
+                              {intervalEventText(interval, copy, ledger)} · {copy.ticketHome.globalDrawNumber}{' '}
                               {formatTicketRange(interval.start, interval.end)}
                             </span>
                           </div>
@@ -956,12 +956,12 @@ export function TicketHome({
             </div>
             {displayEntry && (
               <div className="pack-strip">
-                {Object.entries(PACK_LABELS).map(([key, label]) => (
-                  <div key={key}>
-                    <span>{copy.packs[key as keyof typeof PACK_LABELS] || label}</span>
+                {packDisplayRows(ledger, displayEntry.packs).map((row) => (
+                  <div key={row.pack}>
+                    <span>{packLabel(row.pack, copy, ledger)}</span>
                     <strong>
-                      {compactNumber(displayEntry.packs[key as keyof typeof PACK_LABELS])}
-                      <small> x{PACK_WEIGHTS[key as keyof typeof PACK_LABELS]}</small>
+                      {compactNumber(displayEntry.packs[row.pack] || 0)}
+                      <small> x{row.weight}</small>
                     </strong>
                   </div>
                 ))}

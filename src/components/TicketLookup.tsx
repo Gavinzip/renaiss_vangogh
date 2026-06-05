@@ -1,6 +1,12 @@
 import { AlertTriangle, Copy, Search, Ticket, Trophy, Wallet } from 'lucide-react'
 import type { RaffleEntry, RaffleLedger } from '../lib/ticketing/types'
-import { formatAddress, formatSbtTier, formatTicketRange, PACK_LABELS, PACK_WEIGHTS } from '../lib/ticketing/rules'
+import {
+  formatAddress,
+  formatSbtTier,
+  formatTicketRange,
+  packDisplayRows,
+  packLabelFromRules,
+} from '../lib/ticketing/rules'
 import {
   anyPrizeProbability,
   compactNumber,
@@ -141,7 +147,7 @@ export function TicketLookup({
                     <div>
                       <strong>{intervalLabel(interval)}</strong>
                       <span>
-                        {interval.pack ? `${PACK_LABELS[interval.pack]} buyback` : 'Multiplier bonus'}
+                        {interval.pack ? `${packLabelFromRules(interval.pack, ledger)} buyback` : 'Multiplier bonus'}
                         {interval.txHash ? ` · ${interval.txHash.slice(0, 10)}...${interval.txHash.slice(-6)}` : ''}
                       </span>
                     </div>
@@ -202,12 +208,12 @@ export function TicketLookup({
         </div>
         {entry && (
           <div className="pack-strip">
-            {Object.entries(PACK_LABELS).map(([key, label]) => (
-              <div key={key}>
-                <span>{label}</span>
+            {packDisplayRows(ledger, entry.packs).map((row) => (
+              <div key={row.pack}>
+                <span>{row.label}</span>
                 <strong>
-                  {compactNumber(entry.packs[key as keyof typeof PACK_LABELS])}
-                  <small> x{PACK_WEIGHTS[key as keyof typeof PACK_LABELS]}</small>
+                  {compactNumber(entry.packs[row.pack] || 0)}
+                  <small> x{row.weight}</small>
                 </strong>
               </div>
             ))}

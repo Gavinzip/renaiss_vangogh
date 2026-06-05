@@ -1,6 +1,6 @@
 export type SbtTier = 'none' | 'brown' | 'silver' | 'gold' | 'rainbow'
 
-export type PackKey = 'omega' | 'eden' | 'costume-pack' | 'magma'
+export type PackKey = string
 
 export type PackCounts = Record<PackKey, number>
 
@@ -39,6 +39,22 @@ export interface BuybackEvent {
   checkoutId: string | null
   tokenId: string | null
   priceInUsdt: string | null
+}
+
+export interface PackRule {
+  pack: PackKey
+  label: string
+  ticketWeight: number
+  contract?: string | null
+  openContract?: string | null
+  buybackContract?: string | null
+  eventKind?: string | null
+  eventTopic?: string | null
+  topic1?: string | null
+  topic2?: string | null
+  topic3?: string | null
+  packId?: string | null
+  configSource?: string | null
 }
 
 export interface RaffleEntry {
@@ -94,6 +110,7 @@ export interface RaffleLedger {
   bonusShuffleSeed?: string | null
   bonusShuffleLocked?: boolean
   bonusShuffleLockedAt?: number | null
+  packRules?: PackRule[]
   entries: RaffleEntry[]
   leaderboardEntries?: RaffleLeaderboardEntry[]
   notes: string[]

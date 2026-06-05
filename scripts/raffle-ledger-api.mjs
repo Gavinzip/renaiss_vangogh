@@ -43,6 +43,7 @@ export function buildLedgerSummary(ledger) {
     bonusShuffleSeed: ledger.bonusShuffleSeed || null,
     bonusShuffleLocked: Boolean(ledger.bonusShuffleLocked),
     bonusShuffleLockedAt: Number(ledger.bonusShuffleLockedAt || 0),
+    packRules: Array.isArray(ledger.packRules) ? ledger.packRules : [],
     entries: [],
     leaderboardEntries: buildLeaderboardEntries(ledger, SUMMARY_LEADERBOARD_LIMIT),
     notes: Array.isArray(ledger.notes) ? ledger.notes : [],

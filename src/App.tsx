@@ -1374,7 +1374,7 @@ export default function App() {
           />
         )}
 
-        {activePage === 'rules' && <PrizeRules copy={copy} />}
+        {activePage === 'rules' && <PrizeRules copy={copy} ledger={ledger} />}
 
         {activePage === 'simulator' && (
           <>

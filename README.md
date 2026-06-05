@@ -4,7 +4,7 @@ React control console for the lucky draw workflow:
 
 - loads an official buyback ledger from `public/lucky-draw-ledger.json`
 - refuses to open the draw console unless `public/lucky-draw-ledger.json` is present
-- applies current published pack weights: OMEGA `1`, Costume Pack `2`
+- applies current published pack weights: OMEGA `1`, EDEN `3`, Costume Pack `2`, MAGMA `2`, Starry Pack `2`
 - applies SBT multipliers: Bronze `1.2`, Silver `1.5`, Gold `2`, Rainbow `3`
 - connects to a BSC wallet and calls the BNB Smart Chain draw contract
 
@@ -55,12 +55,30 @@ LUCKY_DRAW_DATA_DIR=/data/lucky-draw
 LUCKY_DRAW_CACHE_DIR=/data/lucky-draw/cache
 LUCKY_DRAW_LEDGER_PATH=/data/lucky-draw/lucky-draw-ledger.json
 LUCKY_DRAW_REFRESH_MINUTES=60
+LUCKY_DRAW_EXTRA_LEGACY_PACKS=[]
 DATA_BACKUP_REPO_URL=https://github.com/Gavinzip/renaiss_vangogh_data.git
 DATA_BACKUP_GITHUB_TOKEN=...
 DATA_BACKUP_INTERVAL_MINUTES=60
 ```
 
 `/data` must be a mounted persistent disk on the server. Do not point `LUCKY_DRAW_CACHE_DIR` inside the git repo in production.
+
+Extra legacy packs can be added without changing code by setting `LUCKY_DRAW_EXTRA_LEGACY_PACKS` to JSON. Each rule must include a stable pack key, display label, ticket weight, legacy open contract, and `packId`. If `buybackContract` is provided, matched buyback activities must come from that contract.
+
+```bash
+LUCKY_DRAW_EXTRA_LEGACY_PACKS='[
+  {
+    "pack":"future-pack",
+    "label":"Future Pack",
+    "ticketWeight":2,
+    "openContract":"0xaab5f5fa75437a6e9e7004c12c9c56cda4b4885a",
+    "packId":"0x...",
+    "buybackContract":"0xb289..."
+  }
+]'
+```
+
+Replace the placeholder `buybackContract` before using this in production. Every generated `lucky-draw-ledger.json` records the resolved rules in `packRules` and `source.packEventSources` for later audit.
 
 Production commands:
 

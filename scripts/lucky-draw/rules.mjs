@@ -1,3 +1,5 @@
+import { normalizeAddress, normalizeHash, toNumber } from './utils.mjs'
+
 export const OPEN_MONITOR_URL = 'https://open-monitor-rmrm.pages.dev/api/lucky-draw/leaderboard'
 export const WALLET_RESOLVE_URL = 'https://open-monitor-rmrm.pages.dev/api/wallet-migration/resolve'
 export const WALLET_MIGRATIONS_URL = 'https://tcgpro.zeabur.app/api/wallet-migrations.json'
@@ -15,68 +17,211 @@ export const COSTUME_PACK_ID =
   '0x6ab417f10cac2e525f9beb854e47a9672bbe06470014432b2cf271157c183332'
 export const MAGMA_PACK_ID =
   '0x26a4c27796a0e13e0188178750ef4d8d1d3828eb1d7bfe02692bdbeeda1e677c'
+export const STARRY_PACK_ID =
+  '0x4e06640364ce4c2b6793e700b6b8066a11c90503eb92945da232a3106f36b9b9'
+export const LEGACY_PACK_OPEN_CONTRACT = '0xaab5f5fa75437a6e9e7004c12c9c56cda4b4885a'
+export const EXTRA_LEGACY_PACKS_ENV = 'LUCKY_DRAW_EXTRA_LEGACY_PACKS'
 
 export const PACK_WEIGHTS = {
   omega: 1,
   eden: 3,
   'costume-pack': 2,
   magma: 2,
+  'starry-pack': 2,
 }
 
-export const PACK_EVENT_SOURCES = [
+export const BUILTIN_PACK_EVENT_SOURCES = [
   {
     contract: '0x94e7732b0b2e7c51ffd0d56580067d9c2e2b7910',
     pack: 'omega',
-    label: 'OMEGA buyback',
+    label: 'OMEGA',
     ticketWeight: PACK_WEIGHTS.omega,
     eventTopic: BUYBACK_EVENT_TOPIC,
     eventKind: 'buyback-event',
+    configSource: 'built-in',
   },
   {
     contract: '0xfda4a907d23d9f24271bc47483c5b983831e325e',
     pack: 'eden',
-    label: 'EDEN buyback',
+    label: 'EDEN',
     ticketWeight: PACK_WEIGHTS.eden,
     eventTopic: BUYBACK_EVENT_TOPIC,
     eventKind: 'buyback-event',
+    configSource: 'built-in',
   },
   {
-    contract: '0xaab5f5fa75437a6e9e7004c12c9c56cda4b4885a',
+    contract: LEGACY_PACK_OPEN_CONTRACT,
     pack: 'costume-pack',
-    label: 'Costume Pack buyback',
+    label: 'Costume Pack',
     ticketWeight: PACK_WEIGHTS['costume-pack'],
     eventTopic: LEGACY_PACK_OPEN_EVENT_TOPIC,
     topic2: COSTUME_PACK_ID,
+    packId: COSTUME_PACK_ID,
     eventKind: 'legacy-pack-open',
+    configSource: 'built-in',
   },
   {
-    contract: '0xaab5f5fa75437a6e9e7004c12c9c56cda4b4885a',
+    contract: LEGACY_PACK_OPEN_CONTRACT,
     pack: 'magma',
-    label: 'MAGMA buyback',
+    label: 'MAGMA',
     ticketWeight: PACK_WEIGHTS.magma,
     eventTopic: LEGACY_PACK_OPEN_EVENT_TOPIC,
     topic2: MAGMA_PACK_ID,
+    packId: MAGMA_PACK_ID,
     eventKind: 'legacy-pack-open',
+    configSource: 'built-in',
+  },
+  {
+    contract: LEGACY_PACK_OPEN_CONTRACT,
+    pack: 'starry-pack',
+    label: 'Starry Pack',
+    ticketWeight: PACK_WEIGHTS['starry-pack'],
+    eventTopic: LEGACY_PACK_OPEN_EVENT_TOPIC,
+    topic2: STARRY_PACK_ID,
+    packId: STARRY_PACK_ID,
+    eventKind: 'legacy-pack-open',
+    configSource: 'built-in',
   },
 ]
 
-const PACK_CONTRACT_COUNTS = PACK_EVENT_SOURCES.reduce((counts, source) => {
-  counts[source.contract] = (counts[source.contract] || 0) + 1
-  return counts
-}, {})
-
-export const PACK_CONTRACTS = Object.fromEntries(
-  PACK_EVENT_SOURCES.filter((source) => PACK_CONTRACT_COUNTS[source.contract] === 1).map((source) => [
-    source.contract,
-    source,
-  ]),
-)
-
-export const LEGACY_PACK_IDS = {
-  'legacy:0x6ab417f10cac2e525f9beb854e47a9672bbe06470014432b2cf271157c183332':
-    'costume-pack',
-  'legacy:0x26a4c27796a0e13e0188178750ef4d8d1d3828eb1d7bfe02692bdbeeda1e677c': 'magma',
+function normalizePackKey(value, index) {
+  const pack = String(value || '').trim().toLowerCase()
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(pack)) {
+    throw new Error(`${EXTRA_LEGACY_PACKS_ENV}[${index}].pack must use lowercase letters, numbers, and hyphens.`)
+  }
+  return pack
 }
+
+function normalizeLabel(value, index) {
+  const label = String(value || '').trim()
+  if (!label) throw new Error(`${EXTRA_LEGACY_PACKS_ENV}[${index}].label is required.`)
+  return label
+}
+
+export function parseExtraLegacyPackSources(rawValue = process.env[EXTRA_LEGACY_PACKS_ENV] || '') {
+  const text = String(rawValue || '').trim()
+  if (!text) return []
+
+  let payload
+  try {
+    payload = JSON.parse(text)
+  } catch (error) {
+    throw new Error(`${EXTRA_LEGACY_PACKS_ENV} must be valid JSON: ${error.message}`)
+  }
+
+  const rows = Array.isArray(payload) ? payload : [payload]
+  return rows.map((row, index) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      throw new Error(`${EXTRA_LEGACY_PACKS_ENV}[${index}] must be an object.`)
+    }
+
+    const pack = normalizePackKey(row.pack, index)
+    const label = normalizeLabel(row.label, index)
+    const ticketWeight = toNumber(row.ticketWeight)
+    if (ticketWeight <= 0) {
+      throw new Error(`${EXTRA_LEGACY_PACKS_ENV}[${index}].ticketWeight must be a positive integer.`)
+    }
+
+    const contract = normalizeAddress(row.openContract || row.contract)
+    if (!contract) {
+      throw new Error(`${EXTRA_LEGACY_PACKS_ENV}[${index}].openContract must be a valid address.`)
+    }
+
+    const packId = normalizeHash(row.packId || row.topic2)
+    if (!packId) {
+      throw new Error(`${EXTRA_LEGACY_PACKS_ENV}[${index}].packId must be a 0x-prefixed 32-byte hash.`)
+    }
+
+    const rawBuybackContract = String(row.buybackContract || '').trim()
+    const buybackContract = rawBuybackContract ? normalizeAddress(rawBuybackContract) : ''
+    if (rawBuybackContract && !buybackContract) {
+      throw new Error(`${EXTRA_LEGACY_PACKS_ENV}[${index}].buybackContract must be a valid address.`)
+    }
+
+    return {
+      contract,
+      pack,
+      label,
+      ticketWeight,
+      eventTopic: LEGACY_PACK_OPEN_EVENT_TOPIC,
+      topic2: packId,
+      packId,
+      buybackContract,
+      eventKind: 'legacy-pack-open',
+      configSource: EXTRA_LEGACY_PACKS_ENV,
+    }
+  })
+}
+
+function assertUniquePackSources(sources) {
+  const seenPacks = new Set()
+  const seenLegacyIds = new Set()
+
+  for (const source of sources) {
+    if (seenPacks.has(source.pack)) throw new Error(`Duplicate lucky-draw pack rule: ${source.pack}`)
+    seenPacks.add(source.pack)
+
+    if (source.eventKind === 'legacy-pack-open') {
+      const legacyKey = `${source.contract}:${source.topic2}`
+      if (seenLegacyIds.has(legacyKey)) {
+        throw new Error(`Duplicate lucky-draw legacy pack rule: ${legacyKey}`)
+      }
+      seenLegacyIds.add(legacyKey)
+    }
+  }
+}
+
+export function getPackEventSources(extraLegacyPacksRaw = process.env[EXTRA_LEGACY_PACKS_ENV] || '') {
+  const sources = [...BUILTIN_PACK_EVENT_SOURCES, ...parseExtraLegacyPackSources(extraLegacyPacksRaw)]
+  assertUniquePackSources(sources)
+  return sources
+}
+
+export function getPackWeights(sources = getPackEventSources()) {
+  return Object.fromEntries(sources.map((source) => [source.pack, source.ticketWeight]))
+}
+
+export function getPackContracts(sources = getPackEventSources()) {
+  const counts = sources.reduce((result, source) => {
+    result[source.contract] = (result[source.contract] || 0) + 1
+    return result
+  }, {})
+  return Object.fromEntries(
+    sources.filter((source) => counts[source.contract] === 1).map((source) => [source.contract, source]),
+  )
+}
+
+export function getLegacyPackIds(sources = getPackEventSources()) {
+  const rows = {}
+  for (const source of sources) {
+    if (source.eventKind !== 'legacy-pack-open' || !source.topic2) continue
+    rows[`legacy:${source.topic2}`] = source.pack
+    rows[source.topic2] = source.pack
+  }
+  return rows
+}
+
+export function describePackEventSources(sources = getPackEventSources()) {
+  return sources.map((source) => ({
+    pack: source.pack,
+    label: source.label,
+    ticketWeight: source.ticketWeight,
+    contract: source.contract,
+    openContract: source.eventKind === 'legacy-pack-open' ? source.contract : null,
+    buybackContract: source.buybackContract || null,
+    eventKind: source.eventKind,
+    eventTopic: source.eventTopic,
+    topic1: source.topic1 || null,
+    topic2: source.topic2 || null,
+    topic3: source.topic3 || null,
+    packId: source.packId || source.topic2 || null,
+    configSource: source.configSource || 'built-in',
+  }))
+}
+
+export const PACK_EVENT_SOURCES = getPackEventSources()
+export const PACK_CONTRACTS = getPackContracts(PACK_EVENT_SOURCES)
+export const LEGACY_PACK_IDS = getLegacyPackIds(PACK_EVENT_SOURCES)
 
 export function getSbtTier(rawTickets) {
   if (rawTickets >= 600) return { sbt: 'rainbow', multiplier: 3 }

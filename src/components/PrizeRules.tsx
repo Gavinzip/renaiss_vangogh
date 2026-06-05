@@ -4,10 +4,11 @@ import sbtGoldImage from '../assets/sbt-gold.webp'
 import sbtRainbowImage from '../assets/sbt-rainbow.webp'
 import sbtSilverImage from '../assets/sbt-silver.webp'
 import type { AppCopy } from '../lib/i18n'
+import { packLabel } from '../lib/i18n'
 import { CASH_PRIZE_POOL, CASH_PRIZES, GRAND_PRIZE, TOTAL_PRIZE_SLOTS } from '../lib/prizes/prizes'
 import { compactNumber } from '../lib/ticketing/display'
-import { PACK_LABELS, PACK_WEIGHTS, SBT_TIERS } from '../lib/ticketing/rules'
-import type { PackKey, SbtTier } from '../lib/ticketing/types'
+import { packDisplayRows, SBT_TIERS } from '../lib/ticketing/rules'
+import type { RaffleLedger, SbtTier } from '../lib/ticketing/types'
 
 const SBT_TIER_IMAGES: Partial<Record<SbtTier, string>> = {
   brown: sbtBrownImage,
@@ -16,12 +17,12 @@ const SBT_TIER_IMAGES: Partial<Record<SbtTier, string>> = {
   rainbow: sbtRainbowImage,
 }
 
-export function PrizeRules({ copy }: { copy: AppCopy }) {
-  const packWeightRows = (Object.keys(PACK_WEIGHTS) as PackKey[]).map((pack) => ({
-    pack,
-    label: copy.packs[pack] || PACK_LABELS[pack],
-    weight: PACK_WEIGHTS[pack],
+export function PrizeRules({ copy, ledger }: { copy: AppCopy; ledger: RaffleLedger }) {
+  const packWeightRows = packDisplayRows(ledger).map((row) => ({
+    ...row,
+    label: packLabel(row.pack, copy, ledger),
   }))
+  const nonPackRuleRows = copy.rules.rulesRows.filter((rule) => !/buyback/i.test(rule.label))
 
   return (
     <section className="rules-gallery-page" aria-label="Rules and prizes">
@@ -120,7 +121,13 @@ export function PrizeRules({ copy }: { copy: AppCopy }) {
             <Sparkles size={22} />
             <h3>{copy.ticketHome.ticketMath}</h3>
             <div className="gallery-rule-list">
-              {copy.rules.rulesRows.map((rule) => (
+              {packWeightRows.map((row) => (
+                <div key={row.pack}>
+                  <span>{row.label} buyback</span>
+                  <strong>x{row.weight}</strong>
+                </div>
+              ))}
+              {nonPackRuleRows.map((rule) => (
                 <div key={rule.label}>
                   <span>{rule.label}</span>
                   <strong>{rule.value}</strong>

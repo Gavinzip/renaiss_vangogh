@@ -8,6 +8,7 @@ import {
 import type {
   OpenMonitorLuckyDrawResponse,
   PackCounts,
+  PackRule,
   RaffleEntry,
   RaffleLedger,
   RaffleLeaderboardEntry,
@@ -43,6 +44,30 @@ function normalizeLeaderboardEntry(value: unknown, index: number): RaffleLeaderb
     sbt: normalizeSbt(entry.sbt),
     sbtMultiplier: Number(entry.sbtMultiplier || 1),
     eventCount: toInteger(entry.eventCount),
+  }
+}
+
+function normalizePackRule(value: unknown): PackRule | null {
+  if (!value || typeof value !== 'object') return null
+  const rule = value as Partial<PackRule>
+  const pack = String(rule.pack || '').trim()
+  const label = String(rule.label || '').trim()
+  const ticketWeight = toInteger(rule.ticketWeight)
+  if (!pack || !label || ticketWeight <= 0) return null
+  return {
+    pack,
+    label,
+    ticketWeight,
+    contract: rule.contract || null,
+    openContract: rule.openContract || null,
+    buybackContract: rule.buybackContract || null,
+    eventKind: rule.eventKind || null,
+    eventTopic: rule.eventTopic || null,
+    topic1: rule.topic1 || null,
+    topic2: rule.topic2 || null,
+    topic3: rule.topic3 || null,
+    packId: rule.packId || null,
+    configSource: rule.configSource || null,
   }
 }
 
@@ -138,6 +163,7 @@ export function buildLedgerFromOpenMonitor(data: OpenMonitorLuckyDrawResponse): 
     totalBonusTickets: entries.reduce((sum, entry) => sum + entry.bonusTickets, 0),
     ledgerHash: null,
     drawContractAddress: null,
+    packRules: [],
     entries,
     leaderboardEntries: entries.slice(0, 10).map((entry) => ({
       rank: entry.rank,
@@ -172,6 +198,11 @@ export function normalizeLoadedLedger(value: unknown): RaffleLedger | null {
   const maybe = value as Partial<RaffleLedger>
   if (!Array.isArray(maybe.entries)) return null
   if (maybe.mode !== 'buyback-ledger' && maybe.mode !== 'open-monitor-estimate') return null
+  const sourcePackRulesValue = (maybe as { source?: { packEventSources?: unknown[] } }).source?.packEventSources
+  const sourcePackRules = Array.isArray(sourcePackRulesValue) ? sourcePackRulesValue : []
+  const packRules = (Array.isArray(maybe.packRules) ? maybe.packRules : sourcePackRules)
+    .map((rule) => normalizePackRule(rule))
+    .filter((rule): rule is PackRule => Boolean(rule))
   const legacyTotalRawTickets = toInteger(
     maybe.totalRawTickets ||
       maybe.entries.reduce((sum, entry) => sum + toInteger((entry as Partial<RaffleEntry>).rawTickets), 0),
@@ -275,6 +306,7 @@ export function normalizeLoadedLedger(value: unknown): RaffleLedger | null {
     bonusShuffleSeed: maybe.bonusShuffleSeed || null,
     bonusShuffleLocked: Boolean(maybe.bonusShuffleLocked),
     bonusShuffleLockedAt: toInteger(maybe.bonusShuffleLockedAt),
+    packRules,
     entries,
     leaderboardEntries,
     notes: maybe.notes || [],

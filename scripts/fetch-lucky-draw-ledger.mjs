@@ -6,7 +6,13 @@ import { fileURLToPath } from 'node:url'
 
 import { loadOpenMonitorCandidates, scanOpenMonitorCandidateEvents } from './lucky-draw/open-monitor-source.mjs'
 import { scanOnchainTicketEvents } from './lucky-draw/onchain-source.mjs'
-import { CAMPAIGN_END, CAMPAIGN_START, WALLET_MIGRATIONS_URL } from './lucky-draw/rules.mjs'
+import {
+  CAMPAIGN_END,
+  CAMPAIGN_START,
+  EXTRA_LEGACY_PACKS_ENV,
+  WALLET_MIGRATIONS_URL,
+  getSbtTier,
+} from './lucky-draw/rules.mjs'
 import { fetchWalletMigrationMap } from './lucky-draw/wallet-migrations.mjs'
 import { resolveEventWallets } from './lucky-draw/wallet-resolve.mjs'
 import {
@@ -16,7 +22,6 @@ import {
   stableStringify,
   toNumber,
 } from './lucky-draw/utils.mjs'
-import { getSbtTier } from './lucky-draw/rules.mjs'
 
 const BONUS_SHUFFLE_VERSION = 'sbt-bonus-shuffle-v1'
 
@@ -46,6 +51,7 @@ function parseArgs(argv) {
     walletResolveCacheTtlMinutes: 24 * 60,
     activityCacheTtlMinutes: 15,
     eventCacheOverlapBlocks: 200,
+    extraLegacyPacksRaw: process.env[EXTRA_LEGACY_PACKS_ENV] || '',
     out: 'public/lucky-draw-ledger.json',
     contracts: [],
     fromBlock: 0,
@@ -79,6 +85,7 @@ function parseArgs(argv) {
     else if (arg === '--wallet-resolve-cache-ttl-minutes') args.walletResolveCacheTtlMinutes = toNumber(argv[++index])
     else if (arg === '--activity-cache-ttl-minutes') args.activityCacheTtlMinutes = toNumber(argv[++index])
     else if (arg === '--event-cache-overlap-blocks') args.eventCacheOverlapBlocks = toNumber(argv[++index])
+    else if (arg === '--extra-legacy-packs') args.extraLegacyPacksRaw = argv[++index] || ''
     else if (arg === '--out') args.out = argv[++index] || args.out
     else if (arg === '--contracts') args.contracts = parseAddressCsv(argv[++index])
     else if (arg === '--from-block') args.fromBlock = toNumber(argv[++index])
@@ -110,6 +117,7 @@ function parseArgs(argv) {
     args.bscscanApiUrl = args.bscscanApiUrl || envValues.BSCSCAN_API_URL || envValues.ONCHAIN_API_URL
     args.bscscanChainId = args.bscscanChainId || toNumber(envValues.BSCSCAN_CHAIN_ID || envValues.ONCHAIN_CHAIN_ID || 56)
     args.bscscanApiKey = args.bscscanApiKey || envValues.BSCSCAN_API_KEY || ''
+    args.extraLegacyPacksRaw = args.extraLegacyPacksRaw || envValues[EXTRA_LEGACY_PACKS_ENV] || ''
   }
 
   args.source = args.source || 'onchain'
@@ -144,6 +152,7 @@ Options:
   --wallet-resolve-cache-ttl-minutes <n>    Default 1440.
   --activity-cache-ttl-minutes <n>          Renaiss activity cache TTL. Default 15.
   --event-cache-overlap-blocks <n> Re-scan last n cached blocks. Default 200.
+  --extra-legacy-packs <json>  Same JSON value as ${EXTRA_LEGACY_PACKS_ENV}.
   --contracts <csv>             Limit on-chain scan to specific contract addresses.
   --from-block <n>              Debug scan start block.
   --to-block <n>                Debug scan end block.
@@ -165,7 +174,7 @@ function emptyEntry(userAddress, sourceAddresses) {
     rank: 0,
     userAddress,
     sourceAddresses: [...sourceAddresses].filter(Boolean),
-    packs: { omega: 0, eden: 0, 'costume-pack': 0, magma: 0 },
+    packs: { omega: 0, eden: 0, 'costume-pack': 0, magma: 0, 'starry-pack': 0 },
     baseTickets: 0,
     bonusTickets: 0,
     rawTickets: 0,
@@ -463,6 +472,10 @@ async function main() {
     )
   }
   const entriesWithOldSourceAddresses = entries.filter((entry) => entry.sourceAddresses.length > 1).length
+  const packRules = Array.isArray(sourceResult.source.packEventSources)
+    ? sourceResult.source.packEventSources
+    : []
+  const extraPackRules = packRules.filter((rule) => rule.configSource === EXTRA_LEGACY_PACKS_ENV)
   const hashPayload = {
     campaignStart: CAMPAIGN_START,
     campaignEnd: CAMPAIGN_END,
@@ -500,6 +513,7 @@ async function main() {
     bonusShuffleLocked,
     bonusShuffleLockedAt: bonusShuffleLocked ? CAMPAIGN_END : null,
     source: sourceResult.source,
+    packRules,
     entriesWithOldSourceAddresses,
     walletMigrationSource: remoteWalletMigration.meta,
     walletResolveCache: resolved.cacheStats,
@@ -510,7 +524,12 @@ async function main() {
       'EDEN buyback events count as 3 raw tickets.',
       'Costume Pack buybacks require a legacy pull checkout id matched to a buyback activity and count as 2 raw tickets.',
       'MAGMA buybacks require a legacy pull checkout id matched to a buyback activity and count as 2 raw tickets.',
-      'RenaCrypt, Pack 7/9, and other packs are not counted unless the official rules change.',
+      'Starry Pack buybacks require a legacy pull checkout id matched to a buyback activity and count as 2 raw tickets.',
+      extraPackRules.length > 0
+        ? `Applied ${extraPackRules.length} extra legacy pack rule(s) from ${EXTRA_LEGACY_PACKS_ENV}.`
+        : `No extra legacy pack rules were loaded from ${EXTRA_LEGACY_PACKS_ENV}.`,
+      'The complete pack rule set used for this ledger is recorded in packRules and source.packEventSources.',
+      'Packs not listed in packRules are not counted unless the official rules change.',
       'Base ticket intervals are ordered by block number, transaction index, log index, timestamp, tx hash, then event id.',
       'Raw tickets use stable R-prefixed display numbers in buyback transaction order.',
       `SBT bonus tickets use independent B-prefixed display numbers allocated by deterministic shuffle ${allocation.bonusShuffleVersion}.`,

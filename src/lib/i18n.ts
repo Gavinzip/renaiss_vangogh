@@ -1,4 +1,5 @@
-import type { PackKey, SbtTier } from './ticketing/types'
+import { packLabelFromRules } from './ticketing/rules'
+import type { PackKey, RaffleLedger, SbtTier } from './ticketing/types'
 
 export const LANGUAGES = [
   { code: 'zh-TW', label: '繁中' },
@@ -137,7 +138,7 @@ const EN_COPY = {
     timelineTitle: 'How tickets are issued',
     timeline: [
       { label: '01', title: 'Order by chain position', text: 'Eligible events are sorted by block number, transaction index, log index, timestamp, tx hash, then event id.' },
-      { label: '02', title: 'Issue raw tickets first', text: 'OMEGA buybacks issue 1 ticket, EDEN buybacks issue 3 tickets, and Costume Pack / MAGMA buybacks issue 2 tickets.' },
+      { label: '02', title: 'Issue raw tickets first', text: 'Each eligible buyback issues raw tickets according to the pack weight table below.' },
       { label: '03', title: 'Append SBT bonus tickets', text: 'Brown, Silver, Gold, and Rainbow multipliers are applied after the raw ledger is fixed.' },
     ],
     prizeAllocation: 'Prize allocation',
@@ -152,6 +153,7 @@ const EN_COPY = {
       { label: 'EDEN buyback', value: '3 raw tickets' },
       { label: 'Costume Pack buyback', value: '2 raw tickets' },
       { label: 'MAGMA buyback', value: '2 raw tickets' },
+      { label: 'Starry Pack buyback', value: '2 raw tickets' },
       { label: 'Excluded packs', value: 'RenaCrypt, Pack 7/9, and other packs unless official rules change' },
       { label: 'Final tickets', value: 'ceil(raw tickets x SBT multiplier)' },
     ],
@@ -395,6 +397,7 @@ const EN_COPY = {
     eden: 'EDEN',
     'costume-pack': 'Costume Pack',
     magma: 'MAGMA',
+    'starry-pack': 'Starry Pack',
   } satisfies Record<PackKey, string>,
 }
 
@@ -515,7 +518,7 @@ export const COPY: Record<LanguageCode, AppCopy> = {
       timelineTitle: '票券如何發放',
       timeline: [
         { label: '01', title: '依鏈上位置排序', text: '合格事件會依區塊高度、交易索引、log 索引、時間戳、交易 Hash、事件 id 排序。' },
-        { label: '02', title: '先發原始票', text: 'OMEGA buyback 發 1 張原始票；EDEN buyback 發 3 張；Costume Pack / MAGMA buyback 發 2 張。' },
+        { label: '02', title: '先發原始票', text: '每一筆合格 buyback 會依下方包款權重表發出原始票。' },
         { label: '03', title: '再追加 SBT 加成票', text: 'Brown、Silver、Gold、Rainbow 會在原始帳本固定後，確定性追加加成票。' },
       ],
       prizeAllocation: '獎項分配',
@@ -530,6 +533,7 @@ export const COPY: Record<LanguageCode, AppCopy> = {
         { label: 'EDEN buyback', value: '3 張原始票' },
         { label: 'Costume Pack buyback', value: '2 張原始票' },
         { label: 'MAGMA buyback', value: '2 張原始票' },
+        { label: 'Starry Pack buyback', value: '2 張原始票' },
         { label: '不列入包款', value: 'RenaCrypt、Pack 7/9 等其他包款，除非官方規則更新' },
         { label: '最終票數', value: 'ceil(原始票數 x SBT 加成倍數)' },
       ],
@@ -853,7 +857,7 @@ export const COPY: Record<LanguageCode, AppCopy> = {
       timelineTitle: '票券如何发放',
       timeline: [
         { label: '01', title: '按链上位置排序', text: '合格事件会按区块高度、交易索引、log 索引、时间戳、交易 Hash、事件 id 排序。' },
-        { label: '02', title: '先发原始票', text: 'OMEGA buyback 发 1 张原始票；EDEN buyback 发 3 张；Costume Pack / MAGMA buyback 发 2 张。' },
+        { label: '02', title: '先发原始票', text: '每一笔合格 buyback 会依下方包款权重表发出原始票。' },
         { label: '03', title: '再追加 SBT 加成票', text: 'Brown、Silver、Gold、Rainbow 会在原始账本固定后，确定性追加加成票。' },
       ],
       prizeAllocation: '奖项分配',
@@ -868,6 +872,7 @@ export const COPY: Record<LanguageCode, AppCopy> = {
         { label: 'EDEN buyback', value: '3 张原始票' },
         { label: 'Costume Pack buyback', value: '2 张原始票' },
         { label: 'MAGMA buyback', value: '2 张原始票' },
+        { label: 'Starry Pack buyback', value: '2 张原始票' },
         { label: '不计入包款', value: 'RenaCrypt、Pack 7/9 等其他包款，除非官方规则更新' },
         { label: '最终票数', value: 'ceil(原始票数 x SBT 加成倍数)' },
       ],
@@ -1096,7 +1101,7 @@ export const COPY: Record<LanguageCode, AppCopy> = {
       timelineTitle: '티켓 발행 방식',
       timeline: [
         { label: '01', title: '체인 위치순 정렬', text: '대상 이벤트는 블록 번호, 트랜잭션 인덱스, log 인덱스, 시간, 트랜잭션 Hash, 이벤트 id 순서로 정렬됩니다.' },
-        { label: '02', title: '원시 티켓 먼저 발행', text: 'OMEGA buyback 은 1장, EDEN buyback 은 3장, Costume Pack / MAGMA buyback 은 2장의 원시 티켓을 발행합니다.' },
+        { label: '02', title: '원시 티켓 먼저 발행', text: '각 적격 buyback 은 아래 팩 가중치 표에 따라 원시 티켓을 발행합니다.' },
         { label: '03', title: 'SBT 보너스 추가', text: 'Brown, Silver, Gold, Rainbow 배수는 원시 장부 확정 후 결정적으로 추가됩니다.' },
       ],
       prizeAllocation: '상품 배정',
@@ -1174,7 +1179,7 @@ export const COPY: Record<LanguageCode, AppCopy> = {
       timelineTitle: 'วิธีออกตั๋ว',
       timeline: [
         { label: '01', title: 'เรียงตามตำแหน่งบนเชน', text: 'อีเวนต์ที่เข้าเงื่อนไขจะเรียงตามบล็อก transaction index, log index, เวลา, Hash ธุรกรรม และ event id' },
-        { label: '02', title: 'ออกตั๋วดิบก่อน', text: 'OMEGA buyback ได้ 1 ตั๋ว, EDEN ได้ 3 ตั๋ว และ Costume Pack / MAGMA ได้ 2 ตั๋ว' },
+        { label: '02', title: 'ออกตั๋วดิบก่อน', text: 'Buyback ที่เข้าเงื่อนไขแต่ละรายการจะออกตั๋วดิบตามตารางน้ำหนักแพ็กด้านล่าง' },
         { label: '03', title: 'เพิ่มโบนัส SBT', text: 'ตัวคูณ Brown, Silver, Gold และ Rainbow จะเพิ่มหลังบัญชีตั๋วดิบถูกล็อกแล้ว' },
       ],
       prizeAllocation: 'การจัดสรรรางวัล',
@@ -1252,7 +1257,7 @@ export const COPY: Record<LanguageCode, AppCopy> = {
       timelineTitle: 'Cách phát vé',
       timeline: [
         { label: '01', title: 'Xếp theo vị trí on-chain', text: 'Sự kiện hợp lệ được sắp theo block, transaction index, log index, thời gian, transaction hash và event id.' },
-        { label: '02', title: 'Phát vé gốc trước', text: 'OMEGA buyback nhận 1 vé, EDEN nhận 3 vé, Costume Pack / MAGMA nhận 2 vé.' },
+        { label: '02', title: 'Phát vé gốc trước', text: 'Mỗi buyback hợp lệ phát vé gốc theo bảng trọng số pack bên dưới.' },
         { label: '03', title: 'Thêm vé bonus SBT', text: 'Hệ số Brown, Silver, Gold và Rainbow được thêm sau khi ledger vé gốc đã cố định.' },
       ],
       prizeAllocation: 'Phân bổ giải',
@@ -1273,6 +1278,6 @@ export function formatLocalizedSbtTier(tier: SbtTier, multiplier: number, copy: 
   return `${copy.sbt.tiers[tier]} x${multiplier}`
 }
 
-export function packLabel(pack: PackKey, copy: AppCopy): string {
-  return copy.packs[pack]
+export function packLabel(pack: PackKey, copy: AppCopy, ledger?: Pick<RaffleLedger, 'packRules'> | null): string {
+  return (copy.packs as Record<string, string>)[pack] || packLabelFromRules(pack, ledger)
 }
