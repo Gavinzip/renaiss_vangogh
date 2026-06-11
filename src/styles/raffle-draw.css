@@ -1158,6 +1158,7 @@
   display: grid;
   width: min(88vw, 1040px);
   margin: auto;
+  translate: 0 -5%;
   overflow: hidden;
   isolation: isolate;
   transform-style: preserve-3d;
@@ -1175,33 +1176,40 @@
 }
 
 .page-draw .draw-reveal-result--batch {
-  align-content: center;
-  justify-items: center;
+  place-content: center;
+  place-items: center;
   padding: clamp(0.85rem, 1.6vw, 1.2rem);
 }
 
 .page-draw .draw-reveal-batch-grid {
   --batch-columns: 5;
+  --batch-stage-shift-y: -8%;
   display: grid;
   grid-template-columns: repeat(var(--batch-columns), minmax(0, 1fr));
   gap: clamp(0.48rem, 1vw, 0.88rem);
+  align-self: center;
   align-items: center;
+  justify-self: center;
   width: min(100%, 1120px);
   max-height: calc(100% - 4.7rem);
+  translate: 0 var(--batch-stage-shift-y);
 }
 
 .page-draw .draw-reveal-batch-grid.is-small-batch {
   --batch-columns: 2;
+  --batch-stage-shift-y: -5%;
   width: min(100%, 900px);
 }
 
 .page-draw .draw-reveal-batch-grid.is-medium-batch {
   --batch-columns: 3;
+  --batch-stage-shift-y: -10%;
   width: min(100%, 1000px);
 }
 
 .page-draw .draw-reveal-batch-grid.is-large-batch {
   --batch-columns: 5;
+  --batch-stage-shift-y: -18%;
 }
 
 .page-draw .draw-reveal-batch-ticket {
@@ -1246,6 +1254,7 @@
   inset: 0;
   z-index: 3;
   display: grid;
+  grid-template: "ticket-number" 1fr / 1fr;
   place-items: center;
   color: #160b01;
   text-align: center;
@@ -1274,13 +1283,15 @@
 
 .page-draw .draw-reveal-batch-number strong {
   display: inline-flex;
-  align-items: baseline;
+  grid-area: ticket-number;
+  place-self: center;
+  align-items: center;
   justify-content: center;
   color: #140900;
   font-family: "Archivo Black", "Space Grotesk", "Noto Sans TC", sans-serif;
   font-size: clamp(1.3rem, 2.05vw, 2.35rem);
   font-weight: 900;
-  line-height: 0.86;
+  line-height: 1;
   letter-spacing: 0;
   -webkit-text-stroke: 1px rgba(255, 231, 138, 0.3);
   text-shadow:
@@ -1318,6 +1329,7 @@
   inset: 0;
   z-index: 3;
   display: grid;
+  grid-template: "ticket-number" 1fr / 1fr;
   place-items: center;
   color: #160b01;
   text-align: center;
@@ -1356,15 +1368,16 @@
 
 .page-draw .draw-reveal-number-wrap > strong {
   display: inline-flex;
-  grid-area: 1 / 1;
+  grid-area: ticket-number;
+  place-self: center;
   justify-content: center;
-  align-items: baseline;
+  align-items: center;
   min-width: 0;
   color: #140900;
   font-family: "Archivo Black", "Space Grotesk", "Noto Sans TC", sans-serif;
   font-size: 9.4rem;
   font-weight: 900;
-  line-height: 0.82;
+  line-height: 1;
   letter-spacing: 0;
   -webkit-text-stroke: 2px rgba(255, 231, 138, 0.34);
   text-shadow:

@@ -63,6 +63,12 @@ function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
 
+function waitForNextPaint() {
+  return new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => resolve())
+  })
+}
+
 function isMediaPlaybackBlocked(error: unknown) {
   if (!(error instanceof Error)) return false
   return error.name === 'NotAllowedError' || /notallowed|permission|user gesture|user activation/i.test(error.message)
@@ -239,7 +245,8 @@ export function DrawReveal({
   const activeBatchReveal = currentBatchReveal.length > 1 ? currentBatchReveal : []
   const isBatchReveal = activeBatchReveal.length > 1
   const activeCurrentReveal = currentReveal
-  const activeReveal = isBatchReveal ? null : activeCurrentReveal ?? storedSelectedReveal
+  const canUseStoredReveal = !isSequenceRunning && phase !== 'video'
+  const activeReveal = isBatchReveal ? null : activeCurrentReveal ?? (canUseStoredReveal ? storedSelectedReveal : null)
   const winnerTicket = activeReveal?.ticket ?? null
   const rawTicketNumber = winnerTicket ?? ''
   const ticketNumber = winnerTicket ? formatDrawTicketNumber(winnerTicket, totalTickets) : ''
@@ -524,6 +531,14 @@ export function DrawReveal({
     return false
   }
 
+  const clearActiveRevealDisplay = useCallback((nextPhase: 'idle' | 'video' | 'reveal' = 'idle') => {
+    previousRevealedDigitCountRef.current = 0
+    setCurrentReveal(null)
+    setCurrentBatchReveal([])
+    setDigitRevealState({ ticketNumber: '', count: 0 })
+    setPhase(nextPhase)
+  }, [])
+
   function primeRevealResult(result: DrawWinnerResult) {
     const number = formatDrawTicketNumber(result.ticket, totalTickets)
     previousRevealedDigitCountRef.current = 0
@@ -626,7 +641,9 @@ export function DrawReveal({
 
     if (isLiveRunMode && (!drawStatus || !drawStatus.finalized || !drawStatus.requested || drawStatus.state < 3)) {
       sequenceLockRef.current = true
+      clearActiveRevealDisplay()
       setIsSequenceRunning(true)
+      await waitForNextPaint()
       try {
         if (!drawStatus) {
           setSequenceMessage(copy.walletPanel.read)
@@ -688,11 +705,10 @@ export function DrawReveal({
     sequenceLockRef.current = true
     if (isLiveRunMode) {
       setRevealedContractResults(contractResults)
-      setCurrentReveal(null)
-      setCurrentBatchReveal([])
-      setDigitRevealState({ ticketNumber: '', count: 0 })
     }
+    clearActiveRevealDisplay()
     setIsSequenceRunning(true)
+    await waitForNextPaint()
     try {
       if (isLiveRunMode) {
         if (!hasWallet) {
@@ -818,10 +834,9 @@ export function DrawReveal({
 
     sequenceLockRef.current = true
     setRevealedContractResults(contractResults)
-    setCurrentReveal(null)
-    setCurrentBatchReveal([])
-    setDigitRevealState({ ticketNumber: '', count: 0 })
+    clearActiveRevealDisplay()
     setIsSequenceRunning(true)
+    await waitForNextPaint()
     try {
       const revealResultsFromContract = await onDrawRandomContractPrizeSlot()
       const contractReveals = revealResultsFromContract.map(({ prizeSlotIndex, ticket }) =>
@@ -871,11 +886,8 @@ export function DrawReveal({
     if (isLiveRunMode) return
     cancelVideoPlaybackWait()
     setDemoResults([])
-    setCurrentReveal(null)
-    setCurrentBatchReveal([])
-    setDigitRevealState({ ticketNumber: '', count: 0 })
+    clearActiveRevealDisplay()
     setSequenceMessage('')
-    setPhase('idle')
   }
 
   async function resetLiveRound() {
@@ -898,10 +910,7 @@ export function DrawReveal({
       const didReset = await onResetRound()
       if (!didReset) return
       setRevealedContractResults([])
-      setCurrentReveal(null)
-      setCurrentBatchReveal([])
-      setDigitRevealState({ ticketNumber: '', count: 0 })
-      setPhase('idle')
+      clearActiveRevealDisplay()
       setSelectedPrizeGroupId('grand')
       setBatchRevealCount(1)
     } finally {
@@ -928,25 +937,20 @@ export function DrawReveal({
     const timeoutId = window.setTimeout(() => {
       cancelVideoPlaybackWait()
       setRevealedContractResults([])
-      setCurrentReveal(null)
-      setCurrentBatchReveal([])
-      setDigitRevealState({ ticketNumber: '', count: 0 })
+      clearActiveRevealDisplay()
       setSelectedPrizeGroupId('grand')
       setBatchRevealCount(1)
-      setPhase('idle')
     }, 0)
 
     return () => {
       window.clearTimeout(timeoutId)
     }
-  }, [cancelVideoPlaybackWait, drawStatus, isLiveRunMode])
+  }, [cancelVideoPlaybackWait, clearActiveRevealDisplay, drawStatus, isLiveRunMode])
 
   function selectRunMode(nextRunMode: DrawRunMode) {
     if (nextRunMode === runMode) return
     cancelVideoPlaybackWait()
-    setCurrentReveal(null)
-    setCurrentBatchReveal([])
-    setDigitRevealState({ ticketNumber: '', count: 0 })
+    clearActiveRevealDisplay()
     setSequenceMessage('')
     setRevealedContractResults([])
     onRunModeChange(nextRunMode)
