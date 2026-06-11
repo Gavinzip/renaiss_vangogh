@@ -1067,7 +1067,10 @@
 .page-draw .draw-reveal-stage {
   position: relative;
   display: grid;
-  height: clamp(420px, calc(100svh - 118px), 650px);
+  justify-self: center;
+  width: min(100%, calc(177.778svh - 209.8px));
+  aspect-ratio: 16 / 9;
+  height: auto;
   min-height: 0;
   overflow: hidden;
   scroll-margin-block: 5rem;
@@ -1096,11 +1099,17 @@
   grid-area: 1 / 1;
   width: 100%;
   height: 100%;
+  min-width: 0;
+  min-height: 0;
+  box-sizing: border-box;
 }
 
 .page-draw .draw-reveal-video {
   display: block;
-  object-fit: cover;
+  object-fit: contain;
+  background:
+    radial-gradient(circle at 50% 48%, rgba(255, 217, 112, 0.16), transparent 36%),
+    linear-gradient(150deg, #080d15 0%, #101927 48%, #050912 100%);
   transition:
     opacity 420ms ease,
     filter 420ms ease,
@@ -1140,8 +1149,9 @@
 
 .page-draw .draw-reveal-result {
   position: relative;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: clamp(1rem, 2vw, 1.6rem);
   opacity: 0;
   visibility: hidden;
@@ -1156,9 +1166,12 @@
 .page-draw .draw-reveal-ticket {
   position: relative;
   display: grid;
-  width: min(88vw, 1040px);
-  margin: auto;
-  translate: 0 -5%;
+  aspect-ratio: 1040 / 529;
+  flex: 0 0 auto;
+  width: min(100%, 1040px);
+  max-width: 1040px;
+  max-height: 100%;
+  margin: 0;
   overflow: hidden;
   isolation: isolate;
   transform-style: preserve-3d;
@@ -1170,12 +1183,14 @@
 .page-draw .draw-reveal-ticket img {
   grid-area: 1 / 1;
   width: 100%;
-  height: auto;
+  height: 100%;
+  object-fit: contain;
   pointer-events: none;
   user-select: none;
 }
 
 .page-draw .draw-reveal-result--batch {
+  display: grid;
   place-content: center;
   place-items: center;
   padding: clamp(0.85rem, 1.6vw, 1.2rem);
@@ -1978,7 +1993,8 @@
   }
 
   .page-draw .draw-reveal-stage {
-    height: clamp(410px, calc(100svh - 118px), 570px);
+    width: min(100%, calc(177.778svh - 209.8px));
+    height: auto;
     min-height: 0;
   }
 
@@ -1987,7 +2003,8 @@
   }
 
   .page-draw .draw-reveal-ticket {
-    width: min(84vw, 940px);
+    width: min(100%, 940px);
+    max-width: 940px;
   }
 
   .page-draw .draw-reveal-batch-grid {
@@ -2048,7 +2065,8 @@
   }
 
   .page-draw .draw-reveal-stage {
-    height: clamp(360px, calc(100svh - 104px), 520px);
+    width: min(100%, calc(177.778svh - 184.9px));
+    height: auto;
     min-height: 0;
   }
 
@@ -2120,13 +2138,16 @@
   }
 
   .page-draw .draw-reveal-stage {
+    width: 100%;
+    aspect-ratio: auto;
     height: clamp(340px, calc(100svh - 96px), 460px);
     min-height: 0;
     border-radius: 18px;
   }
 
   .page-draw .draw-reveal-ticket {
-    width: min(92vw, 620px);
+    width: 100%;
+    max-width: 620px;
   }
 
   .page-draw .draw-reveal-stage--batch {
