@@ -35,6 +35,7 @@ import {
   drawRandomPrizeSlotWinner,
   finalizeContractLedger,
   makeDrawStatusSerializable,
+  readConnectedWallet,
   readDrawStatus,
   requestContractDraw,
   resetContractDraft,
@@ -235,6 +236,53 @@ export default function App() {
         activeDrawStatus.prizeSlotCount !== BigInt(TOTAL_PRIZE_DRAW_SLOTS) ||
         (activeLedgerForContractCheck.ledgerHash && activeDrawStatus.ledgerHash.toLowerCase() !== activeLedgerForContractCheck.ledgerHash.toLowerCase())),
   )
+
+  useEffect(() => {
+    const ethereum = window.ethereum
+    if (!ethereum?.on) return undefined
+
+    let cancelled = false
+
+    async function syncInjectedWallet(trigger: 'chain_changed' | 'accounts_changed') {
+      setDrawMessage('')
+      setDrawStatusByNetwork({})
+      try {
+        const nextWallet = await readConnectedWallet()
+        if (cancelled) return
+        setWallet(nextWallet)
+        trackEvent('wallet_connect_result', {
+          chain_id: nextWallet?.chainId.toString() ?? '',
+          status: nextWallet ? 'connected' : 'disconnected',
+          trigger,
+        })
+      } catch (error) {
+        if (cancelled) return
+        setWallet(null)
+        setWalletError(error instanceof Error ? error.message : copy.walletPanel.connectionFailed)
+        trackEvent('wallet_connect_result', {
+          status: 'error',
+          trigger,
+        })
+      }
+    }
+
+    const handleChainChanged = () => {
+      void syncInjectedWallet('chain_changed')
+    }
+
+    const handleAccountsChanged = () => {
+      void syncInjectedWallet('accounts_changed')
+    }
+
+    ethereum.on('chainChanged', handleChainChanged)
+    ethereum.on('accountsChanged', handleAccountsChanged)
+
+    return () => {
+      cancelled = true
+      ethereum.removeListener?.('chainChanged', handleChainChanged)
+      ethereum.removeListener?.('accountsChanged', handleAccountsChanged)
+    }
+  }, [copy.walletPanel.connectionFailed])
   const initialCoverAssetsReady = Boolean(ledger && displayLedger && initialAssetsReady)
   const initialExperienceReady = initialCoverAssetsReady && initialCoverPaintReady
   const visibleNavItems = useMemo<PageKey[]>(
