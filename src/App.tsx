@@ -60,7 +60,7 @@ const SimpleDrawSimulator = lazy(() => import('./components/SimpleDrawSimulator'
 const WalletPanel = lazy(() => import('./components/WalletPanel').then((module) => ({ default: module.WalletPanel })))
 
 const LEDGER_REFRESH_INTERVAL_MS = 15 * 60 * 1000
-const FULL_LEDGER_PRELOAD_DELAY_MS = 1200
+const FULL_LEDGER_PRELOAD_DELAY_MS = 150
 const INITIAL_LOADER_MIN_VISIBLE_MS = 1100
 const INITIAL_LOADER_EXIT_MS = 540
 const SECRET_DRAW_UNLOCK_CLICKS = 3
@@ -423,7 +423,10 @@ export default function App() {
     async function refreshFullLedger() {
       setFullLedgerError('')
       try {
-        const value = await loadFullRaffleLedger({ force: Boolean(fullLedger && !fullLedgerIsCurrent) })
+        const value = await loadFullRaffleLedger({
+          force: Boolean(fullLedger && !fullLedgerIsCurrent),
+          version: summaryLedgerKey,
+        })
         if (alive) setFullLedger(value)
       } catch (error) {
         if (alive) setFullLedgerError(error instanceof Error ? error.message : 'Could not load full raffle ledger.')
@@ -435,7 +438,7 @@ export default function App() {
     return () => {
       alive = false
     }
-  }, [fullLedger, fullLedgerIsCurrent, needsFullLedger])
+  }, [fullLedger, fullLedgerIsCurrent, needsFullLedger, summaryLedgerKey])
 
   useEffect(() => {
     if (!ledger || fullLedgerIsCurrent) return undefined
@@ -447,7 +450,10 @@ export default function App() {
     let alive = true
     const timeoutId = window.setTimeout(() => {
       setFullLedgerError('')
-      void loadFullRaffleLedger({ force: Boolean(fullLedger && !fullLedgerIsCurrent) })
+      void loadFullRaffleLedger({
+        force: Boolean(fullLedger && !fullLedgerIsCurrent),
+        version: summaryLedgerKey,
+      })
         .then((value) => {
           if (alive) setFullLedger(value)
         })

@@ -80,8 +80,27 @@ function shouldCompress(path) {
   return ['.css', '.html', '.js', '.json', '.svg'].includes(extname(path).toLowerCase())
 }
 
+function fileFreshnessHeaders(stats) {
+  return {
+    etag: `W/"${stats.size.toString(16)}-${Math.floor(stats.mtimeMs).toString(16)}"`,
+    lastModified: stats.mtime.toUTCString(),
+  }
+}
+
+function requestHasFreshFile(request, { etag, lastModified }) {
+  const ifNoneMatch = request.headers['if-none-match']
+  if (ifNoneMatch && ifNoneMatch.split(',').map((value) => value.trim()).includes(etag)) return true
+
+  const ifModifiedSince = request.headers['if-modified-since']
+  if (!ifModifiedSince) return false
+
+  const modifiedSince = Date.parse(ifModifiedSince)
+  const lastModifiedAt = Date.parse(lastModified)
+  return Number.isFinite(modifiedSince) && Number.isFinite(lastModifiedAt) && modifiedSince >= lastModifiedAt
+}
+
 function sendFile(request, response, path, headers = {}) {
-  if (!existsSync(path) || !statSync(path).isFile()) {
+  if (!existsSync(path)) {
     response.writeHead(404, {
       'content-type': 'text/plain; charset=utf-8',
       ...headers,
@@ -89,12 +108,36 @@ function sendFile(request, response, path, headers = {}) {
     response.end('Not found')
     return
   }
+
+  const stats = statSync(path)
+  if (!stats.isFile()) {
+    response.writeHead(404, {
+      'content-type': 'text/plain; charset=utf-8',
+      ...headers,
+    })
+    response.end('Not found')
+    return
+  }
+
+  const freshnessHeaders = fileFreshnessHeaders(stats)
+  const sharedHeaders = {
+    etag: freshnessHeaders.etag,
+    'last-modified': freshnessHeaders.lastModified,
+    ...headers,
+  }
+
+  if (requestHasFreshFile(request, freshnessHeaders)) {
+    response.writeHead(304, sharedHeaders)
+    response.end()
+    return
+  }
+
   const compress = acceptsGzip(request) && shouldCompress(path)
   response.writeHead(200, {
     'content-type': contentType(path),
     ...(shouldCompress(path) ? { vary: 'Accept-Encoding' } : {}),
     ...(compress ? { 'content-encoding': 'gzip' } : {}),
-    ...headers,
+    ...sharedHeaders,
   })
   const stream = createReadStream(path)
   if (compress) {
@@ -388,7 +431,7 @@ const server = createServer((request, response) => {
 
   if (url.pathname === '/lucky-draw-ledger.json') {
     sendFile(request, response, ledgerPath, {
-      'cache-control': 'no-store',
+      'cache-control': 'public, max-age=120, stale-while-revalidate=600',
       'access-control-allow-origin': '*',
     })
     return

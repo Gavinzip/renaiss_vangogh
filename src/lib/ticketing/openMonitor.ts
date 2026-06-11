@@ -9,15 +9,34 @@ const RAFFLE_SUMMARY_URL = '/api/raffle-summary'
 const OPEN_MONITOR_LUCKY_DRAW_URL = '/open-monitor-api/lucky-draw/leaderboard'
 
 let fullLedgerCache: RaffleLedger | null = null
+let fullLedgerCacheKey = ''
 let fullLedgerRequest: Promise<RaffleLedger> | null = null
+let fullLedgerRequestKey = ''
 
 type RaffleEntryRequestOptions = {
   intervalOffset?: number
   intervalLimit?: number | 'all'
 }
 
-async function readJson(url: string): Promise<unknown> {
-  const response = await fetch(url, { cache: 'no-store' })
+type ReadJsonOptions = {
+  cache?: RequestCache
+}
+
+type FullLedgerOptions = {
+  force?: boolean
+  version?: string
+}
+
+function versionedUrl(url: string, version = '') {
+  if (!version) return url
+  const base = typeof window === 'undefined' ? 'http://localhost' : window.location.origin
+  const nextUrl = new URL(url, base)
+  nextUrl.searchParams.set('v', version)
+  return nextUrl.toString()
+}
+
+async function readJson(url: string, options: ReadJsonOptions = {}): Promise<unknown> {
+  const response = await fetch(url, { cache: options.cache ?? 'no-store' })
   if (!response.ok) {
     throw new Error(`${url} returned HTTP ${response.status}`)
   }
@@ -33,21 +52,27 @@ export async function loadRaffleLedger(): Promise<RaffleLedger> {
   return summary
 }
 
-export async function loadFullRaffleLedger({ force = false }: { force?: boolean } = {}): Promise<RaffleLedger> {
-  if (!force && fullLedgerCache) return fullLedgerCache
-  if (!force && fullLedgerRequest) return fullLedgerRequest
+export async function loadFullRaffleLedger({ force = false, version = '' }: FullLedgerOptions = {}): Promise<RaffleLedger> {
+  const requestKey = version || 'current'
+  if (!force && fullLedgerCache && fullLedgerCacheKey === requestKey) return fullLedgerCache
+  if (!force && fullLedgerRequest && fullLedgerRequestKey === requestKey) return fullLedgerRequest
 
-  fullLedgerRequest = readJson(FULL_LEDGER_URL)
+  fullLedgerRequestKey = requestKey
+  fullLedgerRequest = readJson(versionedUrl(FULL_LEDGER_URL, version), {
+    cache: force ? 'reload' : 'default',
+  })
     .then((payload) => {
       const ledger = normalizeLoadedLedger(payload)
       if (!ledger) {
         throw new Error('public/lucky-draw-ledger.json is missing or invalid. Generate the buyback ledger before opening the draw console.')
       }
       fullLedgerCache = ledger
+      fullLedgerCacheKey = requestKey
       return ledger
     })
     .finally(() => {
       fullLedgerRequest = null
+      fullLedgerRequestKey = ''
     })
 
   return fullLedgerRequest
