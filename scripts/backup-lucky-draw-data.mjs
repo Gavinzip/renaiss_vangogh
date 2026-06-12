@@ -16,6 +16,7 @@ import { promisify } from 'node:util'
 import { stableStringify } from './lucky-draw/utils.mjs'
 
 const execFileAsync = promisify(execFile)
+const DEFAULT_BACKUP_EXCLUDE_DIRS = 'cache,snapshots'
 
 function parseArgs(argv) {
   const args = {
@@ -25,7 +26,8 @@ function parseArgs(argv) {
       process.env.LUCKY_DRAW_BACKUP_REPO_URL ||
       'https://github.com/Gavinzip/renaiss_vangogh_data.git',
     branch: process.env.DATA_BACKUP_BRANCH || 'main',
-    worktree: process.env.DATA_BACKUP_WORKTREE || '/data/lucky-draw-backup-repo',
+    worktree: process.env.DATA_BACKUP_WORKTREE || '/tmp/lucky-draw-backup-repo',
+    excludeDirs: parseExcludeDirs(process.env.DATA_BACKUP_EXCLUDE_DIRS || DEFAULT_BACKUP_EXCLUDE_DIRS),
     dryRun: false,
   }
 
@@ -35,12 +37,23 @@ function parseArgs(argv) {
     else if (arg === '--repo-url') args.repoUrl = argv[++index] || args.repoUrl
     else if (arg === '--branch') args.branch = argv[++index] || args.branch
     else if (arg === '--worktree') args.worktree = argv[++index] || args.worktree
+    else if (arg === '--exclude-dir') args.excludeDirs.add(argv[++index] || '')
     else if (arg === '--dry-run') args.dryRun = true
   }
 
+  args.excludeDirs.delete('')
   args.dataDir = resolve(args.dataDir)
   args.worktree = resolve(args.worktree)
   return args
+}
+
+function parseExcludeDirs(value) {
+  return new Set(
+    String(value || '')
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry && entry !== '.' && entry !== '..' && !entry.includes('/')),
+  )
 }
 
 function timestampId(date = new Date()) {
@@ -72,15 +85,17 @@ function removeWorktreeContents(worktree) {
   }
 }
 
-function copyDirectory(source, target) {
+function copyDirectory(source, target, options = {}) {
   mkdirSync(target, { recursive: true })
   for (const name of readdirSync(source)) {
     if (name === '.git') continue
+    if (options.excludeDirs?.has(name)) continue
+
     const sourcePath = join(source, name)
     const targetPath = join(target, name)
     const stat = statSync(sourcePath)
     if (stat.isDirectory()) {
-      copyDirectory(sourcePath, targetPath)
+      copyDirectory(sourcePath, targetPath, options)
       continue
     }
     if (stat.isFile()) copyFileSync(sourcePath, targetPath)
@@ -116,7 +131,9 @@ async function ensureWorktree(args, gitEnv) {
   const repoUrl = githubUrlWithUsername(args.repoUrl)
   if (!existsSync(args.worktree)) {
     mkdirSync(resolve(args.worktree, '..'), { recursive: true })
-    await git(['clone', repoUrl, args.worktree], { env: gitEnv })
+    await git(['clone', '--depth', '1', '--single-branch', '--branch', args.branch, repoUrl, args.worktree], {
+      env: gitEnv,
+    })
   }
 
   if (!existsSync(join(args.worktree, '.git'))) {
@@ -124,8 +141,8 @@ async function ensureWorktree(args, gitEnv) {
   }
 
   await git(['-C', args.worktree, 'remote', 'set-url', 'origin', repoUrl], { env: gitEnv })
-  await git(['-C', args.worktree, 'fetch', 'origin', args.branch], { env: gitEnv }).catch(() => null)
-  await git(['-C', args.worktree, 'checkout', '-B', args.branch], { env: gitEnv })
+  await git(['-C', args.worktree, 'fetch', '--depth', '1', 'origin', args.branch], { env: gitEnv })
+  await git(['-C', args.worktree, 'checkout', '-B', args.branch, 'FETCH_HEAD'], { env: gitEnv })
   await git(['-C', args.worktree, 'config', 'user.name', 'Renaiss Lucky Draw Backup'], { env: gitEnv })
   await git(['-C', args.worktree, 'config', 'user.email', 'backup@renaiss.xyz'], { env: gitEnv })
 }
@@ -161,6 +178,8 @@ async function main() {
   console.log(
     `[data-backup] ${args.dryRun ? 'dry-run ' : ''}source=${args.dataDir} repo=${redactUrl(args.repoUrl)} branch=${args.branch}`,
   )
+  console.log(`[data-backup] worktree=${args.worktree}`)
+  console.log(`[data-backup] excluding directories=${Array.from(args.excludeDirs).join(',') || 'none'}`)
   console.log(`[data-backup] ledger=${summary.ledgerHash || 'missing'} entries=${summary.totalEntries || 0}`)
   if (args.dryRun) return
 
@@ -175,7 +194,7 @@ async function main() {
   try {
     await ensureWorktree(args, gitEnv)
     removeWorktreeContents(args.worktree)
-    copyDirectory(args.dataDir, args.worktree)
+    copyDirectory(args.dataDir, args.worktree, { excludeDirs: args.excludeDirs })
     writeFileSync(
       join(args.worktree, 'backup-meta.json'),
       `${stableStringify({
@@ -183,6 +202,7 @@ async function main() {
         source: basename(args.dataDir),
         repo: args.repoUrl,
         branch: args.branch,
+        excludedDirectories: Array.from(args.excludeDirs).sort(),
         summary,
       })}\n`,
     )

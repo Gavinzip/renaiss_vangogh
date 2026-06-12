@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { copyFileSync, createReadStream, existsSync, mkdirSync, statSync } from 'node:fs'
+import { copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { extname, join, normalize, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
@@ -24,6 +24,7 @@ const ledgerPath = process.env.LUCKY_DRAW_LEDGER_PATH || join(dataDir, 'lucky-dr
 const identityLookupPath =
   process.env.LUCKY_DRAW_IDENTITY_LOOKUP_PATH || fileURLToPath(new URL('./data/lucky-draw-wallet-identities.json', import.meta.url))
 const snapshotDir = process.env.LUCKY_DRAW_SNAPSHOT_DIR || join(dataDir, 'snapshots')
+const snapshotKeep = readIntegerEnv('LUCKY_DRAW_SNAPSHOT_KEEP', 72, 1)
 const port = Number(process.env.PORT || 3000)
 const refreshMinutes = Math.max(1, Number(process.env.LUCKY_DRAW_REFRESH_MINUTES || 60))
 const refreshIntervalMs = refreshMinutes * 60 * 1000
@@ -57,6 +58,15 @@ let lastBackup = {
   exitCode: null,
   error: null,
   trigger: null,
+}
+
+function readIntegerEnv(name, fallback, min = 0) {
+  const raw = process.env[name]
+  if (raw === undefined || raw === '') return fallback
+
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.max(min, Math.floor(parsed))
 }
 
 function contentType(path) {
@@ -192,11 +202,61 @@ function distPathForUrl(url) {
 
 function snapshotLedger() {
   if (!existsSync(ledgerPath)) return null
-  mkdirSync(snapshotDir, { recursive: true })
-  const id = new Date().toISOString().replace(/[:.]/g, '-')
-  const snapshotPath = join(snapshotDir, `lucky-draw-ledger-${id}.json`)
-  copyFileSync(ledgerPath, snapshotPath)
-  return snapshotPath
+  try {
+    mkdirSync(snapshotDir, { recursive: true })
+    const id = new Date().toISOString().replace(/[:.]/g, '-')
+    const snapshotPath = join(snapshotDir, `lucky-draw-ledger-${id}.json`)
+    copyFileSync(ledgerPath, snapshotPath)
+    pruneLedgerSnapshots()
+    return snapshotPath
+  } catch (error) {
+    console.error('[ledger-refresh] snapshot failed', error)
+    return null
+  }
+}
+
+function listLedgerSnapshots() {
+  if (!existsSync(snapshotDir)) return []
+
+  return readdirSync(snapshotDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && /^lucky-draw-ledger-.+\.json$/.test(entry.name))
+    .flatMap((entry) => {
+      const path = join(snapshotDir, entry.name)
+      try {
+        const stats = statSync(path)
+        return [
+          {
+            name: entry.name,
+            path,
+            mtimeMs: stats.mtimeMs,
+          },
+        ]
+      } catch (error) {
+        console.warn(`[ledger-refresh] could not stat snapshot ${path}`, error)
+        return []
+      }
+    })
+    .sort((left, right) => {
+      if (right.mtimeMs !== left.mtimeMs) return right.mtimeMs - left.mtimeMs
+      return right.name.localeCompare(left.name)
+    })
+}
+
+function pruneLedgerSnapshots() {
+  const snapshots = listLedgerSnapshots()
+  if (snapshots.length <= snapshotKeep) return
+
+  const staleSnapshots = snapshots.slice(snapshotKeep)
+  let deleted = 0
+  for (const snapshot of staleSnapshots) {
+    try {
+      rmSync(snapshot.path, { force: true })
+      deleted += 1
+    } catch (error) {
+      console.warn(`[ledger-refresh] could not prune snapshot ${snapshot.path}`, error)
+    }
+  }
+  if (deleted > 0) console.log(`[ledger-refresh] pruned ${deleted} stale snapshot(s), kept latest ${snapshotKeep}`)
 }
 
 function runDataBackup(trigger) {
@@ -327,6 +387,8 @@ const server = createServer((request, response) => {
         cacheDir,
         ledgerPath,
         identityLookupPath,
+        snapshotDir,
+        snapshotKeep,
         ledgerExists: existsSync(ledgerPath),
         identityLookupExists: existsSync(identityLookupPath),
         refreshMinutes,
