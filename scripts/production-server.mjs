@@ -9,6 +9,7 @@ import { createGzip } from 'node:zlib'
 import {
   buildLedgerEntryResponse,
   buildLedgerSummary,
+  buildParticipantIdentities,
   findLedgerEntry,
   findLedgerEntryByAddresses,
   parseEntryIntervalQuery,
@@ -405,7 +406,19 @@ const server = createServer((request, response) => {
 
   if (url.pathname === '/api/raffle-summary') {
     try {
-      sendJson(request, response, 200, buildLedgerSummary(readLedgerPayload(ledgerPath)), {
+      sendJson(request, response, 200, buildLedgerSummary(readLedgerPayload(ledgerPath), readIdentityIndexForApi()), {
+        'cache-control': 'no-store',
+        'access-control-allow-origin': '*',
+      })
+    } catch (error) {
+      sendLedgerApiError(request, response, error)
+    }
+    return
+  }
+
+  if (url.pathname === '/api/participant-identities') {
+    try {
+      sendJson(request, response, 200, buildParticipantIdentities(readLedgerPayload(ledgerPath), readIdentityIndexForApi()), {
         'cache-control': 'no-store',
         'access-control-allow-origin': '*',
       })

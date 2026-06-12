@@ -13,6 +13,7 @@ export const luckyDrawAbi = [
   'function resetDraft() external',
   'function owner() external view returns (address)',
   'function drawOperator() external view returns (address)',
+  'function isAdmin(address account) external view returns (bool)',
   'function vrfCoordinatorAddress() external view returns (address)',
   'function vrfConfig() external view returns (bytes32 keyHash, uint64 subscriptionId, uint16 requestConfirmations, uint32 callbackGasLimit)',
   'function state() external view returns (uint8)',

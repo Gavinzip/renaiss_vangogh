@@ -1000,6 +1000,13 @@ td {
   font-weight: 680;
 }
 
+.ticket-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .copy-ticket-button {
   width: auto;
   min-width: 132px;
@@ -1014,7 +1021,8 @@ td {
   white-space: nowrap;
 }
 
-.copy-ticket-button--copied {
+.copy-ticket-button--copied,
+.copy-ticket-button--exported {
   color: #08704f;
   border-color: rgba(0, 168, 138, 0.2);
   background: #e7fff6;
@@ -3505,6 +3513,19 @@ body::after {
   background: rgba(255, 255, 255, 0.74);
 }
 
+.page-tickets .copy-ticket-button--copied,
+.page-tickets .copy-ticket-button--exported {
+  color: #08704f;
+  border-color: rgba(0, 168, 138, 0.2);
+  background: #e7fff6;
+}
+
+.page-tickets .copy-ticket-button--failed {
+  color: #9f2d2d;
+  border-color: rgba(210, 64, 64, 0.22);
+  background: #fff1f1;
+}
+
 .page-tickets .ticket-home-list {
   counter-reset: ticket-range;
   max-height: min(730px, calc(100dvh - 180px));
@@ -4054,6 +4075,10 @@ body::after {
   .page-tickets .ticket-number-panel .panel-heading {
     align-items: start;
     gap: 12px;
+  }
+
+  .page-tickets .ticket-actions {
+    width: 100%;
   }
 
   .page-tickets .copy-ticket-button {

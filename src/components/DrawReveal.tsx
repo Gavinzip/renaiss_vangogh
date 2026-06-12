@@ -1,4 +1,4 @@
-import { Crown, FastForward, Loader2, Play, RotateCcw, Shuffle, Sparkles } from 'lucide-react'
+import { FastForward, Loader2, Play, RotateCcw, Sparkles } from 'lucide-react'
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { gsap } from 'gsap'
 import goldTicketImage from '../assets/gold-ticket-transparent.webp'
@@ -12,16 +12,14 @@ import {
   type PrizeDrawMode,
   type PrizeGroupId,
 } from '../lib/draw/prizeSlots'
-import { isDrawNetworkKey, type DrawNetworkConfig, type DrawRunMode } from '../lib/contracts/luckyDrawNetworks'
+import { isDrawNetworkKey, type DrawRunMode } from '../lib/contracts/luckyDrawNetworks'
 import type { AppCopy } from '../lib/i18n'
 import { compactNumber, formatDrawTicketNumber } from '../lib/ticketing/display'
 import type { WalletIdentityMap } from '../lib/ticketing/identities'
-import { formatAddress } from '../lib/ticketing/rules'
 import type { RaffleLedger } from '../lib/ticketing/types'
 import { buildWinnerCandidateSnapshot, findWinnerCandidate, type WinnerCandidate } from '../lib/ticketing/winnerCandidates'
 import type { ContractRevealResult, DrawStatus } from '../lib/wallet/bsc'
-import { formatDurationMs, transactionDuration, type DrawTransactionRecord, type DrawVrfTiming } from '../lib/wallet/drawTransactions'
-import { formatVrfPaymentBalance, hasInsufficientVrfFunding } from '../lib/wallet/vrfSubscription'
+import { hasInsufficientVrfFunding } from '../lib/wallet/vrfSubscription'
 
 const DRAW_ANIMATION_SRC = '/draw-animation.mp4'
 
@@ -102,9 +100,6 @@ function buildWinnerResult({
 export function DrawReveal({
   runMode,
   onRunModeChange,
-  network,
-  walletAddress,
-  authorizedOperatorAddress,
   winnerTicketsBySlot,
   revealedPrizeSlots,
   totalTickets,
@@ -123,15 +118,9 @@ export function DrawReveal({
   onRefreshStatus,
   onRequestDraw,
   onDrawContractPrizeSlots,
-  onDrawRandomContractPrizeSlot,
-  transactionRecords,
-  vrfTiming,
 }: {
   runMode: DrawRunMode
   onRunModeChange: (mode: DrawRunMode) => void
-  network: DrawNetworkConfig
-  walletAddress: string | null
-  authorizedOperatorAddress: string
   winnerTicketsBySlot: bigint[]
   revealedPrizeSlots: bigint[]
   totalTickets: number
@@ -150,9 +139,6 @@ export function DrawReveal({
   onRefreshStatus: () => Promise<void>
   onRequestDraw: () => Promise<void>
   onDrawContractPrizeSlots: (prizeSlotIndexes: number[]) => Promise<ContractRevealResult[]>
-  onDrawRandomContractPrizeSlot: () => Promise<ContractRevealResult[]>
-  transactionRecords: DrawTransactionRecord[]
-  vrfTiming: DrawVrfTiming | null
 }) {
   const [phase, setPhase] = useState<'idle' | 'video' | 'reveal'>('idle')
   const [digitRevealState, setDigitRevealState] = useState({ ticketNumber: '', count: 0 })
@@ -167,7 +153,6 @@ export function DrawReveal({
   const [sequenceMessage, setSequenceMessage] = useState('')
   const [videoReady, setVideoReady] = useState(false)
   const [videoLoadError, setVideoLoadError] = useState(false)
-  const [clockNow, setClockNow] = useState(0)
   const rootRef = useRef<HTMLElement | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const videoPlaybackCancelRef = useRef<(() => void) | null>(null)
@@ -240,7 +225,6 @@ export function DrawReveal({
   const selectedGroupResults = visibleResults.filter((result) => result.prizeGroupId === activePrizeGroupId)
   const selectedExistingRevealResults = effectiveDrawMode === 'batch' ? selectedGroupResults : selectedGroupResults.slice(-1)
   const canRevealExistingSelection = !isLiveRunMode && selectedRemainingSlots.length === 0 && selectedExistingRevealResults.length > 0
-  const selectedRunCount = canRevealExistingSelection ? selectedExistingRevealResults.length : selectedDrawCount
   const storedSelectedReveal = selectedGroupResults[selectedGroupResults.length - 1] ?? visibleResults[visibleResults.length - 1] ?? null
   const activeBatchReveal = currentBatchReveal.length > 1 ? currentBatchReveal : []
   const isBatchReveal = activeBatchReveal.length > 1
@@ -282,7 +266,9 @@ export function DrawReveal({
       : resultSource === 'contract'
         ? copy.drawReveal.winningLabel
         : copy.drawReveal.readyState
-  const statusCopy = activeDisplaySource === 'demo' ? copy.drawReveal.demoNotice : activeDisplaySource === 'contract' ? copy.drawReveal.verified : copy.drawReveal.readyCopy
+  const statusCopy = activeDisplaySource === 'demo' ? copy.drawReveal.demoNotice : activeDisplaySource === 'contract' ? copy.drawReveal.verified : isLiveRunMode ? '' : copy.drawReveal.readyCopy
+  const stageReadyTitle = isLiveRunMode ? copy.drawReveal.readyState : copy.drawReveal.readyTitle
+  const stageReadyCopy = isLiveRunMode ? '' : copy.drawReveal.readyCopy
   const shouldConnectBeforeRun = isLiveRunMode && !hasWallet
   const isWaitingForContractRandomness = Boolean(isLiveRunMode && drawStatus?.requested && drawStatus.state < 3 && !drawStatus.fulfilled)
   const isIntroVideoBlocked = !videoReady || videoLoadError
@@ -291,18 +277,6 @@ export function DrawReveal({
   const hasVrfFundingIssue = hasInsufficientVrfFunding(vrfSubscription)
   const vrfFundingWarning = hasVrfFundingIssue ? copy.walletPanel.vrfFundingMissing : ''
   const vrfConfigWarning = isLiveRunMode ? drawStatus?.vrfSubscriptionError || '' : ''
-  const canUseRandomPrizeSlot = Boolean(
-    isLiveRunMode &&
-      hasWallet &&
-      !vrfConfigWarning &&
-      drawStatus?.supportsSelectablePrizeSlots &&
-      drawStatus.finalized &&
-      drawStatus.requested &&
-      drawStatus.state >= 3 &&
-      !drawStatus.fulfilled &&
-      !isAllComplete &&
-      !isContractLedgerMismatch,
-  )
   const livePrimaryActionIsSetup = Boolean(
     isLiveRunMode &&
       hasWallet &&
@@ -358,36 +332,22 @@ export function DrawReveal({
     : isLiveRunMode
       ? livePrimaryRunLabel
       : copy.drawReveal.startShowcaseDraw
-  const explorerBaseUrl = network.blockExplorerUrls[0]?.replace(/\/$/, '') ?? ''
-  const latestTransactionRecords = transactionRecords.slice(0, 4)
-  const vrfWaitStartedAt = vrfTiming?.requestConfirmedAt ?? vrfTiming?.pendingObservedAt
-  const vrfWaitEndAt = vrfTiming?.randomnessReadyAt ?? clockNow
-  const vrfWaitDuration = vrfWaitStartedAt
-    ? formatDurationMs(vrfWaitEndAt ? vrfWaitEndAt - vrfWaitStartedAt : undefined)
-    : '-'
-  const vrfBalanceLabel = formatVrfPaymentBalance(vrfSubscription)
-  const vrfSubscriptionMeta = vrfSubscription
-    ? `${copy.walletPanel.vrfPendingRequest}: ${
-        vrfSubscription.pendingRequestExists ? copy.walletPanel.requested : copy.walletPanel.ready
-      }`
-    : drawStatus?.vrfSubscriptionError
-      ? copy.walletPanel.vrfSubscriptionReadFailed
-      : '-'
   const resetOrTransactionMessage = operatorMessage || sequenceMessage
-
-  function transactionKindLabel(record: DrawTransactionRecord) {
-    if (record.kind === 'reset') return copy.walletPanel.resetRound
-    if (record.kind === 'finalize') return copy.walletPanel.finalizeLedger
-    if (record.kind === 'request') return copy.drawReveal.requestRound
-    return copy.walletPanel.drawNext
-  }
-
-  function transactionStatusLabel(record: DrawTransactionRecord) {
-    if (record.status === 'awaiting-signature') return copy.walletPanel.txAwaitingSignature
-    if (record.status === 'pending') return copy.walletPanel.txPending
-    if (record.status === 'confirmed') return copy.walletPanel.txConfirmed
-    return copy.walletPanel.txFailed
-  }
+  const drawSequenceMessage =
+    resetOrTransactionMessage ||
+    (primaryRunWouldRevealTicket && isIntroVideoBlocked
+      ? introVideoMessage
+      : isLiveRunMode && vrfConfigWarning
+        ? vrfConfigWarning
+        : isLiveRunMode && isContractLedgerMismatch
+          ? copy.walletPanel.contractTotalMismatch
+          : isLiveRunMode && vrfFundingWarning
+            ? vrfFundingWarning
+            : isLiveRunMode && drawStatus && !drawStatus.supportsSelectablePrizeSlots
+              ? copy.drawReveal.selectableOrderUnavailable
+              : isLiveRunMode && hasWallet && requiresSequentialContractReveal && !isSelectedGroupNextToReveal && selectedRemainingSlots.length > 0
+                ? `${copy.drawReveal.contractOrderNotice} ${copy.drawReveal.slotLabel} #${nextSequentialContractSlot + 1}`
+                : '')
 
   function candidateStrengthStyle(matchingTickets: number): CSSProperties {
     const strength = Math.max(8, Math.round((matchingTickets / maxCandidateTickets) * 100))
@@ -787,79 +747,6 @@ export function DrawReveal({
     }
   }
 
-  async function runRandomPrizeSlotDraw() {
-    if (!isLiveRunMode || sequenceLockRef.current || isSequenceRunning || isContractBusy) return
-    setSequenceMessage('')
-
-    if (!hasWallet) {
-      setSequenceMessage(copy.drawReveal.contractModeNeedsWallet)
-      onConnectWallet()
-      return
-    }
-
-    if (isContractLedgerMismatch) {
-      setSequenceMessage(copy.walletPanel.contractTotalMismatch)
-      return
-    }
-
-    if (!drawStatus?.finalized) {
-      setSequenceMessage(copy.drawReveal.lockLedgerFirst)
-      return
-    }
-
-    if (!drawStatus.requested) {
-      setSequenceMessage(copy.drawReveal.requestVrfFirst)
-      await onRequestDraw()
-      return
-    }
-
-    if (drawStatus.state < 3) {
-      setSequenceMessage(copy.drawReveal.waitingForVrf)
-      return
-    }
-
-    if (!drawStatus.supportsSelectablePrizeSlots) {
-      setSequenceMessage(copy.drawReveal.selectableOrderUnavailable)
-      return
-    }
-
-    if (isAllComplete) {
-      setSequenceMessage(copy.drawReveal.allWinnersRevealed)
-      return
-    }
-
-    if (!guardIntroVideoReady()) {
-      return
-    }
-
-    sequenceLockRef.current = true
-    setRevealedContractResults(contractResults)
-    clearActiveRevealDisplay()
-    setIsSequenceRunning(true)
-    await waitForNextPaint()
-    try {
-      const revealResultsFromContract = await onDrawRandomContractPrizeSlot()
-      const contractReveals = revealResultsFromContract.map(({ prizeSlotIndex, ticket }) =>
-        buildWinnerResult({
-          identities: walletIdentities,
-          ledger,
-          slotIndex: prizeSlotIndex,
-          source: 'contract',
-          ticket,
-        }),
-      )
-      if (contractReveals.length === 0) {
-        setSequenceMessage(copy.drawReveal.noContractTickets)
-        return
-      }
-      setSelectedPrizeGroupId(contractReveals[0].prizeGroupId)
-      await revealResults(contractReveals)
-    } finally {
-      sequenceLockRef.current = false
-      setIsSequenceRunning(false)
-    }
-  }
-
   function queueSelectedDraw() {
     if (shouldConnectBeforeRun) {
       setSequenceMessage(copy.drawReveal.contractModeNeedsWallet)
@@ -973,15 +860,6 @@ export function DrawReveal({
       setVideoReady(true)
     }
   }, [])
-
-  useEffect(() => {
-    const hasActiveTransaction = transactionRecords.some((record) => record.status === 'awaiting-signature' || record.status === 'pending')
-    if (!isWaitingForContractRandomness && !hasActiveTransaction) return undefined
-    const intervalId = window.setInterval(() => setClockNow(Date.now()), 1000)
-    return () => {
-      window.clearInterval(intervalId)
-    }
-  }, [isWaitingForContractRandomness, transactionRecords])
 
   useEffect(() => {
     const root = rootRef.current
@@ -1263,40 +1141,6 @@ export function DrawReveal({
         </div>
       </div>
 
-      {isLiveRunMode && (
-        <div className={`draw-network-banner draw-network-banner--${runMode}`}>
-          <div>
-            <span>{copy.drawReveal.currentNetwork}</span>
-            <strong>{network.label}</strong>
-            <small>{network.chainName}</small>
-          </div>
-          <div>
-            <span>{copy.walletPanel.contract}</span>
-            <strong>{formatAddress(network.contractAddress)}</strong>
-            <small>{network.contractAddress}</small>
-          </div>
-          <div>
-            <span>{copy.walletPanel.operator}</span>
-            <strong>{walletAddress ? formatAddress(walletAddress) : copy.walletPanel.disconnected}</strong>
-            <small>
-              {copy.walletPanel.authorizedOperator}: {formatAddress(authorizedOperatorAddress)}
-            </small>
-          </div>
-          <div>
-            <span>{copy.walletPanel.vrfTiming}</span>
-            <strong>{liveContractStatus}</strong>
-            <small>
-              {copy.walletPanel.vrfWait}: {vrfWaitDuration}
-            </small>
-          </div>
-          <div className={hasVrfFundingIssue ? 'is-warning' : ''}>
-            <span>{copy.walletPanel.vrfBalance}</span>
-            <strong>{vrfBalanceLabel}</strong>
-            <small>{vrfSubscriptionMeta}</small>
-          </div>
-        </div>
-      )}
-
       <div className="draw-reveal-console">
         <div className="draw-reveal-control-group draw-reveal-prize-control">
           <span>{copy.drawReveal.selectPrize}</span>
@@ -1358,12 +1202,6 @@ export function DrawReveal({
         </div>
 
         <div className="draw-reveal-runner">
-          <div>
-            <strong>{prizeLabels[activePrizeGroupId]}</strong>
-            <span>
-              {copy.drawReveal.nextDrawCount}: {compactNumber(selectedRunCount)} / {compactNumber(selectedGroup.slotCount)}
-            </span>
-          </div>
           {isLiveRunMode && (
             <div className="draw-reveal-contract-status">
               <span>{copy.drawReveal.contractStatus}</span>
@@ -1373,80 +1211,13 @@ export function DrawReveal({
               </small>
             </div>
           )}
-          {isLiveRunMode && !hasWallet && (
-            <button className="draw-reveal-run-secondary" type="button" onClick={onConnectWallet} disabled={isContractBusy || isSequenceRunning}>
-              <Crown size={16} />
-              {copy.common.connectWallet}
-            </button>
-          )}
-          {isLiveRunMode && hasWallet && drawStatus?.supportsSelectablePrizeSlots && (
-            <button className="draw-reveal-run-secondary" type="button" onClick={runRandomPrizeSlotDraw} disabled={!canUseRandomPrizeSlot || isContractBusy || isSequenceRunning || isIntroVideoBlocked}>
-              <Shuffle size={16} />
-              {copy.drawReveal.randomPrizeSlot}
-            </button>
-          )}
           {runMode === 'showcase' && (
             <button className="draw-reveal-run-secondary" type="button" onClick={resetDemo} disabled={isSequenceRunning || demoResults.length === 0}>
               {copy.drawReveal.resetShowcase}
             </button>
           )}
         </div>
-
-        {(resetOrTransactionMessage ||
-          (primaryRunWouldRevealTicket && isIntroVideoBlocked) ||
-          (isLiveRunMode && vrfConfigWarning) ||
-          (isLiveRunMode && isContractLedgerMismatch) ||
-          (isLiveRunMode && vrfFundingWarning) ||
-          (isLiveRunMode && hasWallet && requiresSequentialContractReveal && !isSelectedGroupNextToReveal && selectedRemainingSlots.length > 0) ||
-          (isLiveRunMode && hasWallet && drawStatus && !drawStatus.supportsSelectablePrizeSlots)) && (
-          <p className="draw-reveal-sequence-message">
-            {resetOrTransactionMessage ||
-              (primaryRunWouldRevealTicket && isIntroVideoBlocked
-                ? introVideoMessage
-                : vrfConfigWarning
-                ? vrfConfigWarning
-                : isContractLedgerMismatch
-                ? copy.walletPanel.contractTotalMismatch
-                : vrfFundingWarning
-                  ? vrfFundingWarning
-                  : drawStatus && !drawStatus.supportsSelectablePrizeSlots
-                  ? copy.drawReveal.selectableOrderUnavailable
-                  : `${copy.drawReveal.contractOrderNotice} ${copy.drawReveal.slotLabel} #${nextSequentialContractSlot + 1}`)}
-          </p>
-        )}
       </div>
-
-      {isLiveRunMode && (
-        <div className="draw-transaction-timeline">
-          <div className="draw-transaction-timeline-head">
-            <span>{copy.walletPanel.transactionTimeline}</span>
-            <strong>{latestTransactionRecords.length ? `${latestTransactionRecords.length} ${copy.walletPanel.sessionTransactions}` : copy.walletPanel.noSessionTransactions}</strong>
-          </div>
-          {latestTransactionRecords.length > 0 ? (
-            <div className="draw-transaction-list">
-              {latestTransactionRecords.map((record) => (
-                <a
-                  className={`draw-transaction-item is-${record.status}`}
-                  href={record.hash ? `${explorerBaseUrl}/tx/${record.hash}` : undefined}
-                  target="_blank"
-                  rel="noreferrer"
-                  key={record.id}
-                  aria-disabled={!record.hash}
-                >
-                  <span>{transactionKindLabel(record)}</span>
-                  <strong>{record.hash ? `${record.hash.slice(0, 10)}...` : copy.walletPanel.txAwaitingSignature}</strong>
-                  <small>
-                    {transactionStatusLabel(record)} · {transactionDuration(record, clockNow || record.confirmedAt || record.submittedAt || record.startedAt)}
-                    {record.detail ? ` · ${record.detail}` : ''}
-                  </small>
-                </a>
-              ))}
-            </div>
-          ) : (
-            <p>{copy.walletPanel.noSessionTransactions}</p>
-          )}
-        </div>
-      )}
 
       <div
         className={`draw-reveal-stage draw-reveal-stage--${phase}${isBatchReveal ? ' draw-reveal-stage--batch' : ''}`}
@@ -1520,8 +1291,8 @@ export function DrawReveal({
                   </strong>
                 ) : (
                   <div className="draw-reveal-ready-state" aria-label={ticketAriaLabel}>
-                    <strong>{copy.drawReveal.readyTitle}</strong>
-                    <small>{copy.drawReveal.readyCopy}</small>
+                    <strong>{stageReadyTitle}</strong>
+                    {stageReadyCopy && <small>{stageReadyCopy}</small>}
                   </div>
                 )}
                 {hasTicketNumber && !isRevealComplete && (
@@ -1535,10 +1306,16 @@ export function DrawReveal({
             <span>
               {copy.drawReveal.totalTickets}: {compactNumber(totalTickets)}
             </span>
-            <span>{statusCopy}</span>
+            {statusCopy && <span>{statusCopy}</span>}
           </div>
         </div>
       </div>
+
+      {drawSequenceMessage && (
+        <p className={`draw-reveal-sequence-message${isLiveRunMode ? ' draw-reveal-sequence-message--live' : ''}`}>
+          {drawSequenceMessage}
+        </p>
+      )}
 
       {phase === 'reveal' && hasTicketNumber && !isBatchReveal && (
         <section className={`draw-reveal-candidates ${candidateSnapshot ? 'draw-reveal-candidates--active' : 'draw-reveal-candidates--idle'}`} aria-live="polite">

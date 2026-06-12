@@ -85,6 +85,12 @@ export interface RaffleLeaderboardEntry {
   rank: number
   userAddress: string
   sourceAddresses: string[]
+  identity?: {
+    username: string | null
+    linkedTwitter: string | null
+    linkedDiscord: string | null
+  } | null
+  identityAddress?: string | null
   rawTickets: number
   bonusTickets: number
   finalTickets: number

@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import type { ServerResponse } from 'node:http'
 import { readFileSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { readIdentityIndex, resolveIdentityQuery, suggestIdentityQueries } from './scripts/identity-lookup.mjs'
+import { identityForAddress, readIdentityIndex, resolveIdentityQuery, suggestIdentityQueries } from './scripts/identity-lookup.mjs'
 
 let devLedgerCache: { ledger: unknown; mtimeMs: number } | null = null
 const DEFAULT_ENTRY_INTERVAL_LIMIT = 0
@@ -21,7 +21,40 @@ function readDevLedger() {
   return ledger
 }
 
-function devLedgerSummary(ledger: Record<string, unknown>) {
+function devIdentityName(identity: { username?: string | null; linkedTwitter?: string | null; linkedDiscord?: string | null } | null) {
+  return identity?.username || identity?.linkedTwitter || identity?.linkedDiscord || ''
+}
+
+function devNormalizeAddress(value: unknown) {
+  const address = String(value || '').trim().toLowerCase()
+  return /^0x[a-f0-9]{40}$/.test(address) ? address : ''
+}
+
+function devEntryAddresses(entry: Record<string, unknown>) {
+  return [
+    entry.userAddress,
+    ...(Array.isArray(entry.sourceAddresses) ? entry.sourceAddresses : []),
+  ].map(devNormalizeAddress).filter(Boolean)
+}
+
+function devFindLeaderboardIdentity(entry: Record<string, unknown>, identityIndex: ReturnType<typeof readIdentityIndex>) {
+  if (!identityIndex) return { identity: null, identityAddress: null }
+  const addresses = devEntryAddresses(entry)
+
+  for (const address of addresses) {
+    const identity = identityForAddress(identityIndex, address)
+    if (devIdentityName(identity)) {
+      return {
+        identity,
+        identityAddress: address,
+      }
+    }
+  }
+
+  return { identity: null, identityAddress: null }
+}
+
+function devLedgerSummary(ledger: Record<string, unknown>, identityIndex: ReturnType<typeof readIdentityIndex>) {
   return {
     mode: ledger.mode,
     generatedAt: Number(ledger.generatedAt || 0),
@@ -40,15 +73,16 @@ function devLedgerSummary(ledger: Record<string, unknown>) {
     bonusShuffleLocked: Boolean(ledger.bonusShuffleLocked),
     bonusShuffleLockedAt: Number(ledger.bonusShuffleLockedAt || 0),
     entries: [],
-    leaderboardEntries: devBuildLeaderboardEntries(ledger),
+    leaderboardEntries: devBuildLeaderboardEntries(ledger, identityIndex),
     notes: Array.isArray(ledger.notes) ? ledger.notes : [],
   }
 }
 
-function devBuildLeaderboardEntries(ledger: Record<string, unknown>) {
+function devBuildLeaderboardEntries(ledger: Record<string, unknown>, identityIndex: ReturnType<typeof readIdentityIndex>) {
   const entries = Array.isArray(ledger.entries) ? ledger.entries : []
   return entries.slice(0, SUMMARY_LEADERBOARD_LIMIT).map((value, index) => {
     const entry = value as Record<string, unknown>
+    const resolvedIdentity = devFindLeaderboardIdentity(entry, identityIndex)
     return {
       rank: Number(entry.rank || index + 1),
       userAddress: entry.userAddress || '',
@@ -59,8 +93,40 @@ function devBuildLeaderboardEntries(ledger: Record<string, unknown>) {
       sbt: entry.sbt || 'none',
       sbtMultiplier: Number(entry.sbtMultiplier || 1),
       eventCount: Number(entry.eventCount || 0),
+      identity: resolvedIdentity.identity,
+      identityAddress: resolvedIdentity.identityAddress,
     }
   })
+}
+
+function devBuildParticipantIdentities(ledger: Record<string, unknown>, identityIndex: ReturnType<typeof readIdentityIndex>) {
+  const entries = Array.isArray(ledger.entries) ? ledger.entries : []
+  const identities: Record<string, { username: string | null; linkedTwitter: string | null; linkedDiscord: string | null }> = {}
+
+  for (const value of entries) {
+    const entry = value as Record<string, unknown>
+    const addresses = devEntryAddresses(entry)
+    if (addresses.length === 0) continue
+
+    const entryIdentity = devFindLeaderboardIdentity(entry, identityIndex)
+    if (!entryIdentity.identity) continue
+
+    for (const address of addresses) {
+      const directIdentity = identityForAddress(identityIndex, address)
+      const resolvedIdentity = directIdentity && devIdentityName(directIdentity) ? directIdentity : entryIdentity.identity
+      if (resolvedIdentity) identities[address] = resolvedIdentity
+    }
+  }
+
+  return {
+    meta: {
+      generatedAt: Number(ledger.generatedAt || 0),
+      ledgerHash: ledger.ledgerHash || null,
+      totalEntries: Number(ledger.totalEntries || entries.length || 0),
+      identityCount: Object.keys(identities).length,
+    },
+    identities,
+  }
 }
 
 function devFindEntry(ledger: Record<string, unknown>, query: string) {
@@ -143,7 +209,12 @@ function raffleApiDevPlugin(): Plugin {
     configureServer(server: ViteDevServer) {
       server.middlewares.use((request, response, next) => {
         const url = new URL(request.url || '/', 'http://localhost')
-        if (url.pathname !== '/api/raffle-summary' && url.pathname !== '/api/raffle-entry' && url.pathname !== '/api/identity-suggestions') {
+        if (
+          url.pathname !== '/api/raffle-summary' &&
+          url.pathname !== '/api/participant-identities' &&
+          url.pathname !== '/api/raffle-entry' &&
+          url.pathname !== '/api/identity-suggestions'
+        ) {
           next()
           return
         }
@@ -159,7 +230,12 @@ function raffleApiDevPlugin(): Plugin {
 
           const ledger = readDevLedger() as Record<string, unknown>
           if (url.pathname === '/api/raffle-summary') {
-            sendDevJson(response, 200, devLedgerSummary(ledger))
+            sendDevJson(response, 200, devLedgerSummary(ledger, identityIndex))
+            return
+          }
+
+          if (url.pathname === '/api/participant-identities') {
+            sendDevJson(response, 200, devBuildParticipantIdentities(ledger, identityIndex))
             return
           }
 

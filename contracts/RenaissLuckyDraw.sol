@@ -24,6 +24,7 @@ contract RenaissLuckyDraw is VRFConsumerBase {
     address public immutable vrfCoordinatorAddress;
     address private s_owner;
     address private s_pendingOwner;
+    mapping(address => bool) private s_admins;
     VrfConfig public vrfConfig;
     bytes32 public ledgerHash;
     string public ledgerUri;
@@ -55,8 +56,10 @@ contract RenaissLuckyDraw is VRFConsumerBase {
     event RoundReset();
     event OwnershipTransferRequested(address indexed from, address indexed to);
     event OwnershipTransferred(address indexed from, address indexed to);
+    event DrawAdminChanged(address indexed admin, bool allowed);
 
     error NotDrawOperator();
+    error NotDrawAdmin();
     error InvalidAddress();
     error InvalidState();
     error InvalidLedger();
@@ -66,7 +69,12 @@ contract RenaissLuckyDraw is VRFConsumerBase {
     error NotOwner();
 
     modifier onlyDrawOperator() {
-        if (msg.sender != owner() && msg.sender != drawOperator) revert NotDrawOperator();
+        if (!_isDrawAdmin(msg.sender)) revert NotDrawOperator();
+        _;
+    }
+
+    modifier onlyDrawAdmin() {
+        if (!_isDrawAdmin(msg.sender)) revert NotDrawAdmin();
         _;
     }
 
@@ -101,6 +109,10 @@ contract RenaissLuckyDraw is VRFConsumerBase {
         return s_pendingOwner;
     }
 
+    function isAdmin(address account) public view returns (bool) {
+        return _isDrawAdmin(account);
+    }
+
     function transferOwnership(address newOwner) external onlyOwner {
         if (newOwner == address(0)) revert InvalidAddress();
         s_pendingOwner = newOwner;
@@ -121,6 +133,12 @@ contract RenaissLuckyDraw is VRFConsumerBase {
         emit DrawOperatorChanged(operator);
     }
 
+    function setAdmin(address admin, bool allowed) external onlyOwner {
+        if (admin == address(0)) revert InvalidAddress();
+        s_admins[admin] = allowed;
+        emit DrawAdminChanged(admin, allowed);
+    }
+
     function setVrfConfig(
         bytes32 keyHash,
         uint64 subscriptionId,
@@ -136,7 +154,7 @@ contract RenaissLuckyDraw is VRFConsumerBase {
         uint256 newTotalTickets,
         uint256 newPrizeSlotCount,
         string calldata newLedgerUri
-    ) external onlyOwner {
+    ) external onlyDrawAdmin {
         if (state != DrawState.Draft && state != DrawState.LedgerFinalized) revert InvalidState();
         if (newLedgerHash == bytes32(0) || newTotalTickets == 0) revert InvalidLedger();
         _setPrizeSlotCount(newPrizeSlotCount);
@@ -152,7 +170,7 @@ contract RenaissLuckyDraw is VRFConsumerBase {
         emit LedgerFinalized(newLedgerHash, newTotalTickets, newPrizeSlotCount, newLedgerUri);
     }
 
-    function resetDraft() external onlyOwner {
+    function resetDraft() external onlyDrawAdmin {
         if (state == DrawState.RandomnessRequested) revert InvalidState();
         _resetWinnerStorage();
         ledgerHash = bytes32(0);
@@ -164,7 +182,7 @@ contract RenaissLuckyDraw is VRFConsumerBase {
         emit RoundReset();
     }
 
-    function requestDraw() external onlyDrawOperator returns (uint256 newRequestId) {
+    function requestDraw() external onlyDrawAdmin returns (uint256 newRequestId) {
         if (state != DrawState.LedgerFinalized) revert InvalidState();
         VrfConfig memory config = vrfConfig;
         if (config.keyHash == bytes32(0) || config.subscriptionId == 0 || config.callbackGasLimit == 0) {
@@ -193,7 +211,7 @@ contract RenaissLuckyDraw is VRFConsumerBase {
         emit RandomnessFulfilled(fulfilledRequestId, randomWords[0]);
     }
 
-    function drawNext() external onlyDrawOperator returns (uint256 ticketNumber) {
+    function drawNext() external returns (uint256 ticketNumber) {
         if (state != DrawState.RandomnessReady) revert InvalidState();
 
         uint256 prizeSlotIndex = _nextUnrevealedPrizeSlot();
@@ -201,7 +219,7 @@ contract RenaissLuckyDraw is VRFConsumerBase {
         _completeIfFulfilled();
     }
 
-    function drawBatch(uint256 count) external onlyDrawOperator returns (uint256[] memory ticketNumbers) {
+    function drawBatch(uint256 count) external returns (uint256[] memory ticketNumbers) {
         if (state != DrawState.RandomnessReady) revert InvalidState();
         if (count == 0) revert InvalidPrizeSlots();
 
@@ -217,7 +235,7 @@ contract RenaissLuckyDraw is VRFConsumerBase {
         _completeIfFulfilled();
     }
 
-    function drawPrizeSlot(uint256 prizeSlotIndex) external onlyDrawOperator returns (uint256 ticketNumber) {
+    function drawPrizeSlot(uint256 prizeSlotIndex) external returns (uint256 ticketNumber) {
         if (state != DrawState.RandomnessReady) revert InvalidState();
 
         ticketNumber = _drawPrizeSlot(prizeSlotIndex);
@@ -226,7 +244,6 @@ contract RenaissLuckyDraw is VRFConsumerBase {
 
     function drawPrizeSlots(uint256[] calldata prizeSlotIndexes)
         external
-        onlyDrawOperator
         returns (uint256[] memory ticketNumbers)
     {
         if (state != DrawState.RandomnessReady) revert InvalidState();
@@ -243,7 +260,6 @@ contract RenaissLuckyDraw is VRFConsumerBase {
 
     function drawRandomPrizeSlot()
         external
-        onlyDrawOperator
         returns (uint256 prizeSlotIndex, uint256 ticketNumber)
     {
         if (state != DrawState.RandomnessReady) revert InvalidState();
@@ -354,6 +370,10 @@ contract RenaissLuckyDraw is VRFConsumerBase {
     function _setPrizeSlotCount(uint256 newPrizeSlotCount) internal {
         if (newPrizeSlotCount == 0 || newPrizeSlotCount > 256) revert InvalidPrizeSlots();
         prizeSlotCount = newPrizeSlotCount;
+    }
+
+    function _isDrawAdmin(address account) internal view returns (bool) {
+        return account == s_owner || account == drawOperator || s_admins[account];
     }
 
     function _resetWinnerStorage() internal {

@@ -39,6 +39,8 @@ export interface DrawStatus {
   winnerTicketsBySlot: bigint[]
   ownerAddress: string
   drawOperatorAddress: string
+  connectedWalletIsAdmin: boolean
+  supportsAdminWhitelist: boolean
   supportsSelectablePrizeSlots: boolean
   vrfSubscription: DrawVrfSubscriptionStatus | null
   vrfSubscriptionError: string
@@ -322,6 +324,7 @@ export async function readDrawStatus(
   _provider: BrowserProvider,
   contractAddress: string,
   networkKey: DrawNetworkKey,
+  walletAddress = '',
 ): Promise<DrawStatus> {
   const network = DRAW_NETWORKS[networkKey]
   const provider = createReadOnlyProvider(networkKey)
@@ -343,6 +346,16 @@ export async function readDrawStatus(
     contract.drawOperator(),
     winnerCount > 0n ? contract.winnerTickets() : Promise.resolve([]),
   ])
+  let supportsAdminWhitelist = true
+  let connectedWalletIsAdmin = false
+  if (walletAddress) {
+    try {
+      connectedWalletIsAdmin = Boolean(await contract.isAdmin(walletAddress))
+    } catch {
+      supportsAdminWhitelist = false
+      connectedWalletIsAdmin = addressesMatch(walletAddress, ownerAddress) || addressesMatch(walletAddress, drawOperatorAddress)
+    }
+  }
   let supportsSelectablePrizeSlots = true
   let revealedPrizeSlots: bigint[]
   let revealedTickets: bigint[]
@@ -416,6 +429,8 @@ export async function readDrawStatus(
     winnerTicketsBySlot,
     ownerAddress,
     drawOperatorAddress,
+    connectedWalletIsAdmin,
+    supportsAdminWhitelist,
     supportsSelectablePrizeSlots,
     vrfSubscription,
     vrfSubscriptionError,

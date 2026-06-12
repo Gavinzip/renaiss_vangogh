@@ -4,7 +4,7 @@ import type { DrawNetworkConfig } from '../lib/contracts/luckyDrawNetworks'
 import type { AppCopy } from '../lib/i18n'
 import { compactNumber, formatDrawTicketNumber } from '../lib/ticketing/display'
 import { formatAddress } from '../lib/ticketing/rules'
-import { transactionDuration, type DrawTransactionRecord } from '../lib/wallet/drawTransactions'
+import { formatDurationMs, transactionDuration, type DrawTransactionRecord, type DrawVrfTiming } from '../lib/wallet/drawTransactions'
 import { formatVrfPaymentBalance, hasInsufficientVrfFunding } from '../lib/wallet/vrfSubscription'
 import {
   type ConnectedWallet,
@@ -21,6 +21,7 @@ export function WalletPanel({
   ledgerHash,
   prizeSlotCount,
   transactionRecords,
+  vrfTiming,
   authorizedOperatorAddress,
   isAuthorizedOperator,
   isContractOwner,
@@ -34,6 +35,7 @@ export function WalletPanel({
   ledgerHash: string | null
   prizeSlotCount: number
   transactionRecords: DrawTransactionRecord[]
+  vrfTiming: DrawVrfTiming | null
   authorizedOperatorAddress: string
   isAuthorizedOperator: boolean
   isContractOwner: boolean
@@ -63,6 +65,9 @@ export function WalletPanel({
   const vrfSubscription = status?.vrfSubscription ?? null
   const hasVrfFundingIssue = hasInsufficientVrfFunding(vrfSubscription)
   const vrfBalanceLabel = formatVrfPaymentBalance(vrfSubscription)
+  const vrfWaitStartedAt = vrfTiming?.requestConfirmedAt ?? vrfTiming?.pendingObservedAt
+  const vrfWaitEndAt = vrfTiming?.randomnessReadyAt ?? (clockNow || Date.now())
+  const vrfWaitDuration = vrfWaitStartedAt ? formatDurationMs(vrfWaitEndAt - vrfWaitStartedAt) : '-'
   function transactionKindLabel(record: DrawTransactionRecord) {
     if (record.kind === 'reset') return copy.walletPanel.resetRound
     if (record.kind === 'finalize') return copy.walletPanel.finalizeLedger
@@ -79,12 +84,13 @@ export function WalletPanel({
 
   useEffect(() => {
     const hasActiveTransaction = transactionRecords.some((record) => record.status === 'awaiting-signature' || record.status === 'pending')
-    if (!hasActiveTransaction) return undefined
+    const hasActiveVrfTimer = Boolean(vrfWaitStartedAt && !vrfTiming?.randomnessReadyAt && status?.requested && status.state < 3)
+    if (!hasActiveTransaction && !hasActiveVrfTimer) return undefined
     const intervalId = window.setInterval(() => setClockNow(Date.now()), 1000)
     return () => {
       window.clearInterval(intervalId)
     }
-  }, [transactionRecords])
+  }, [status?.requested, status?.state, transactionRecords, vrfTiming?.randomnessReadyAt, vrfWaitStartedAt])
 
   return (
     <section className="panel wallet-panel">
@@ -137,7 +143,7 @@ export function WalletPanel({
         <p className="message wallet-warning-message">{copy.walletPanel.unauthorizedOperator}</p>
       )}
 
-      {wallet && status && !isContractOwner && status.state !== 2 && (
+      {wallet && status && !isAuthorizedOperator && status.state !== 2 && (
         <p className="message wallet-warning-message">{copy.walletPanel.ownerOnlyAction}</p>
       )}
 
@@ -208,6 +214,12 @@ export function WalletPanel({
           <div>
             <strong>{copy.walletPanel.vrfRequestCount}</strong>
             <small>{compactNumber(vrfSubscription.requestCount)}</small>
+          </div>
+          <div>
+            <strong>{copy.walletPanel.vrfTiming}</strong>
+            <small>
+              {copy.walletPanel.vrfWait}: {vrfWaitDuration}
+            </small>
           </div>
           <p>{copy.walletPanel.vrfFeeModel}</p>
           {hasVrfFundingIssue && <p>{copy.walletPanel.vrfFundingMissing}</p>}

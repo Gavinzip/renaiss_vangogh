@@ -1,4 +1,5 @@
 import { readFileSync, statSync } from 'node:fs'
+import { identityForAddress } from './identity-lookup.mjs'
 
 export const DEFAULT_ENTRY_INTERVAL_LIMIT = 0
 export const MAX_ENTRY_INTERVAL_LIMIT = 240
@@ -25,7 +26,7 @@ export function readLedgerPayload(ledgerPath) {
   return ledger
 }
 
-export function buildLedgerSummary(ledger) {
+export function buildLedgerSummary(ledger, identityIndex = null) {
   return {
     mode: ledger.mode,
     generatedAt: Number(ledger.generatedAt || 0),
@@ -45,24 +46,90 @@ export function buildLedgerSummary(ledger) {
     bonusShuffleLockedAt: Number(ledger.bonusShuffleLockedAt || 0),
     packRules: Array.isArray(ledger.packRules) ? ledger.packRules : [],
     entries: [],
-    leaderboardEntries: buildLeaderboardEntries(ledger, SUMMARY_LEADERBOARD_LIMIT),
+    leaderboardEntries: buildLeaderboardEntries(ledger, SUMMARY_LEADERBOARD_LIMIT, identityIndex),
     notes: Array.isArray(ledger.notes) ? ledger.notes : [],
   }
 }
 
-function buildLeaderboardEntries(ledger, limit) {
+function identityName(identity) {
+  return identity?.username || identity?.linkedTwitter || identity?.linkedDiscord || ''
+}
+
+function normalizeAddress(value) {
+  const address = String(value || '').trim().toLowerCase()
+  return /^0x[a-f0-9]{40}$/.test(address) ? address : ''
+}
+
+function entryAddresses(entry) {
+  return [
+    entry?.userAddress,
+    ...(Array.isArray(entry?.sourceAddresses) ? entry.sourceAddresses : []),
+  ].map(normalizeAddress).filter(Boolean)
+}
+
+function findEntryIdentity(entry, identityIndex) {
+  if (!identityIndex) return { identity: null, identityAddress: null }
+  const addresses = entryAddresses(entry)
+
+  for (const address of addresses) {
+    const identity = identityForAddress(identityIndex, address)
+    if (identityName(identity)) {
+      return {
+        identity,
+        identityAddress: address,
+      }
+    }
+  }
+
+  return { identity: null, identityAddress: null }
+}
+
+function buildLeaderboardEntries(ledger, limit, identityIndex = null) {
   const entries = Array.isArray(ledger.entries) ? ledger.entries : []
-  return entries.slice(0, limit).map((entry, index) => ({
-    rank: Number(entry.rank || index + 1),
-    userAddress: entry.userAddress || '',
-    sourceAddresses: Array.isArray(entry.sourceAddresses) ? entry.sourceAddresses : [],
-    rawTickets: Number(entry.rawTickets || 0),
-    bonusTickets: Number(entry.bonusTickets || 0),
-    finalTickets: Number(entry.finalTickets || 0),
-    sbt: entry.sbt || 'none',
-    sbtMultiplier: Number(entry.sbtMultiplier || 1),
-    eventCount: Number(entry.eventCount || 0),
-  }))
+  return entries.slice(0, limit).map((entry, index) => {
+    const resolvedIdentity = findEntryIdentity(entry, identityIndex)
+    return {
+      rank: Number(entry.rank || index + 1),
+      userAddress: entry.userAddress || '',
+      sourceAddresses: Array.isArray(entry.sourceAddresses) ? entry.sourceAddresses : [],
+      rawTickets: Number(entry.rawTickets || 0),
+      bonusTickets: Number(entry.bonusTickets || 0),
+      finalTickets: Number(entry.finalTickets || 0),
+      sbt: entry.sbt || 'none',
+      sbtMultiplier: Number(entry.sbtMultiplier || 1),
+      eventCount: Number(entry.eventCount || 0),
+      identity: resolvedIdentity.identity,
+      identityAddress: resolvedIdentity.identityAddress,
+    }
+  })
+}
+
+export function buildParticipantIdentities(ledger, identityIndex = null) {
+  const entries = Array.isArray(ledger.entries) ? ledger.entries : []
+  const identities = {}
+
+  for (const entry of entries) {
+    const addresses = entryAddresses(entry)
+    if (!addresses.length) continue
+
+    const entryIdentity = findEntryIdentity(entry, identityIndex)
+    if (!entryIdentity.identity) continue
+
+    for (const address of addresses) {
+      const directIdentity = identityForAddress(identityIndex, address)
+      identities[address] = identityName(directIdentity) ? directIdentity : entryIdentity.identity
+    }
+  }
+
+  return {
+    meta: {
+      generatedAt: Number(ledger.generatedAt || 0),
+      ledgerHash: ledger.ledgerHash || null,
+      totalEntries: Number(ledger.totalEntries || entries.length || 0),
+      identityCount: Object.keys(identities).length,
+    },
+    identities,
+  }
 }
 
 export function findLedgerEntry(ledger, query) {

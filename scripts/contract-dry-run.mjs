@@ -74,7 +74,7 @@ function compileMock() {
 }
 
 const { ethers } = await network.create({ network: 'hardhatMainnet' })
-const [owner, outsider] = await ethers.getSigners()
+const [owner, admin, outsider] = await ethers.getSigners()
 const ledgerPath = process.argv.includes('--ledger')
   ? process.argv[process.argv.indexOf('--ledger') + 1]
   : 'public/lucky-draw-ledger.json'
@@ -106,7 +106,35 @@ const raffle = await raffleFactory.deploy(
 )
 await raffle.waitForDeployment()
 
-await (await raffle.finalizeLedger(ledgerHash, totalTickets, prizeSlotCount, ledgerPath)).wait()
+await (await raffle.setAdmin(admin.address, true)).wait()
+if (!(await raffle.isAdmin(owner.address))) throw new Error('owner should be a draw admin')
+if (!(await raffle.isAdmin(admin.address))) throw new Error('configured admin should be a draw admin')
+if (await raffle.isAdmin(outsider.address)) throw new Error('outsider should not be a draw admin')
+
+let outsiderFinalizeBlocked = false
+try {
+  await raffle.connect(outsider).finalizeLedger(ledgerHash, totalTickets, prizeSlotCount, ledgerPath)
+} catch {
+  outsiderFinalizeBlocked = true
+}
+if (!outsiderFinalizeBlocked) {
+  throw new Error('outsider finalizeLedger was not blocked')
+}
+
+await (await raffle.connect(admin).finalizeLedger(ledgerHash, totalTickets, prizeSlotCount, ledgerPath)).wait()
+
+let outsiderResetBlocked = false
+try {
+  await raffle.connect(outsider).resetDraft()
+} catch {
+  outsiderResetBlocked = true
+}
+if (!outsiderResetBlocked) {
+  throw new Error('outsider resetDraft was not blocked')
+}
+
+await (await raffle.connect(admin).resetDraft()).wait()
+await (await raffle.connect(admin).finalizeLedger(ledgerHash, totalTickets, prizeSlotCount, ledgerPath)).wait()
 
 let outsiderBlocked = false
 try {
@@ -118,7 +146,7 @@ if (!outsiderBlocked) {
   throw new Error('outsider requestDraw was not blocked')
 }
 
-const requestTx = await raffle.requestDraw()
+const requestTx = await raffle.connect(admin).requestDraw()
 const requestReceipt = await requestTx.wait()
 const drawEvent = requestReceipt.logs
   .map((log) => {
@@ -145,56 +173,6 @@ if (winnerTicketsBySlot.length !== Number(prizeSlotCount)) throw new Error('winn
 if (winnerTicketsBySlot.some((ticket) => ticket !== 0n)) throw new Error('winner tickets by slot should hide unrevealed slots')
 if (revealedPrizeSlots.length !== 0) throw new Error('revealed prize slots should be empty before reveal calls')
 if (revealedTickets.length !== 0) throw new Error('revealed tickets should be empty before reveal calls')
-
-let outsiderDrawNextBlocked = false
-try {
-  await raffle.connect(outsider).drawNext()
-} catch {
-  outsiderDrawNextBlocked = true
-}
-if (!outsiderDrawNextBlocked) {
-  throw new Error('outsider drawNext was not blocked')
-}
-
-let outsiderDrawBatchBlocked = false
-try {
-  await raffle.connect(outsider).drawBatch(2)
-} catch {
-  outsiderDrawBatchBlocked = true
-}
-if (!outsiderDrawBatchBlocked) {
-  throw new Error('outsider drawBatch was not blocked')
-}
-
-let outsiderDrawPrizeSlotBlocked = false
-try {
-  await raffle.connect(outsider).drawPrizeSlot(1)
-} catch {
-  outsiderDrawPrizeSlotBlocked = true
-}
-if (!outsiderDrawPrizeSlotBlocked) {
-  throw new Error('outsider drawPrizeSlot was not blocked')
-}
-
-let outsiderDrawPrizeSlotsBlocked = false
-try {
-  await raffle.connect(outsider).drawPrizeSlots([1, 2])
-} catch {
-  outsiderDrawPrizeSlotsBlocked = true
-}
-if (!outsiderDrawPrizeSlotsBlocked) {
-  throw new Error('outsider drawPrizeSlots was not blocked')
-}
-
-let outsiderDrawRandomPrizeSlotBlocked = false
-try {
-  await raffle.connect(outsider).drawRandomPrizeSlot()
-} catch {
-  outsiderDrawRandomPrizeSlotBlocked = true
-}
-if (!outsiderDrawRandomPrizeSlotBlocked) {
-  throw new Error('outsider drawRandomPrizeSlot was not blocked')
-}
 
 let zeroBatchBlocked = false
 try {
@@ -238,6 +216,14 @@ if (!emptyPrizeSlotsBlocked) {
 
 const revealedSlotIndexes = []
 const revealedTicketsBySlot = new Map()
+const publicRevealAccess = {
+  drawNext: false,
+  drawBatch: false,
+  drawPrizeSlot: false,
+  drawPrizeSlots: false,
+  drawRandomPrizeSlot: false,
+}
+
 async function collectPrizeWinnerEvents(drawTx, expectedPrizeSlots = null) {
   const drawReceipt = await drawTx.wait()
   const prizeWinnerEvents = drawReceipt.logs
@@ -291,11 +277,18 @@ async function collectPrizeWinnerEvents(drawTx, expectedPrizeSlots = null) {
   }
 }
 
-await collectPrizeWinnerEvents(await raffle.drawPrizeSlot(1), [1])
+await collectPrizeWinnerEvents(await raffle.connect(outsider).drawNext(), [0])
+publicRevealAccess.drawNext = true
+
+await collectPrizeWinnerEvents(await raffle.connect(outsider).drawBatch(2), [1, 2])
+publicRevealAccess.drawBatch = true
+
+await collectPrizeWinnerEvents(await raffle.connect(outsider).drawPrizeSlot(11), [11])
+publicRevealAccess.drawPrizeSlot = true
 
 let duplicatePrizeSlotBlocked = false
 try {
-  await raffle.drawPrizeSlot(1)
+  await raffle.drawPrizeSlot(11)
 } catch {
   duplicatePrizeSlotBlocked = true
 }
@@ -303,8 +296,11 @@ if (!duplicatePrizeSlotBlocked) {
   throw new Error('duplicate prize slot reveal was not blocked')
 }
 
-await collectPrizeWinnerEvents(await raffle.drawPrizeSlots([11, 2, 12]), [11, 2, 12])
-await collectPrizeWinnerEvents(await raffle.drawRandomPrizeSlot())
+await collectPrizeWinnerEvents(await raffle.connect(outsider).drawPrizeSlots([12, 3]), [12, 3])
+publicRevealAccess.drawPrizeSlots = true
+
+await collectPrizeWinnerEvents(await raffle.connect(outsider).drawRandomPrizeSlot())
+publicRevealAccess.drawRandomPrizeSlot = true
 
 const allPrizeSlots = Array.from({ length: Number(prizeSlotCount) }, (_, index) => index)
 while (revealedSlotIndexes.length < Number(prizeSlotCount)) {
@@ -367,12 +363,11 @@ console.log(
       firstFiveWinnerTicketsBySlot: winnerTicketsBySlot.slice(0, 5).map((ticket) => ticket.toString()),
       firstFiveRevealedTickets: revealedTickets.slice(0, 5).map((ticket) => ticket.toString()),
       revealedPrizeSlots: revealedPrizeSlots.map((slotIndex) => slotIndex.toString()),
+      admin: admin.address,
       outsiderBlocked,
-      outsiderDrawNextBlocked,
-      outsiderDrawBatchBlocked,
-      outsiderDrawPrizeSlotBlocked,
-      outsiderDrawPrizeSlotsBlocked,
-      outsiderDrawRandomPrizeSlotBlocked,
+      outsiderFinalizeBlocked,
+      outsiderResetBlocked,
+      publicRevealAccess,
       zeroBatchBlocked,
       overBatchBlocked,
       invalidPrizeSlotBlocked,

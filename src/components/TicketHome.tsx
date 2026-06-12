@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { AtSign, Copy, Gem, Hash, Search, ShieldCheck, Sparkles, Ticket, Trophy, UserRound, Wallet } from 'lucide-react'
+import { AtSign, Copy, Download, Gem, Hash, Search, ShieldCheck, Sparkles, Ticket, Trophy, UserRound, Wallet } from 'lucide-react'
 import sbtBrownImage from '../assets/sbt-brown.webp'
 import sbtGoldImage from '../assets/sbt-gold.webp'
 import sbtRainbowImage from '../assets/sbt-rainbow.webp'
@@ -25,6 +25,7 @@ const EMPTY_INTERVALS: TicketInterval[] = []
 type SearchPhase = 'idle' | 'scanning' | 'settled'
 type IntervalLoadState = 'idle' | 'loading' | 'ready' | 'failed'
 type SuggestionLoadState = 'idle' | 'loading' | 'ready' | 'failed'
+type ExportState = 'idle' | 'loading' | 'exported' | 'failed'
 type TicketSearchSource = 'manual' | 'connected_wallet' | 'suggestion'
 
 type TicketSearchDetails = {
@@ -105,6 +106,46 @@ function formatRefreshTime(value: number, language: LanguageCode) {
   }).format(new Date(value))
 }
 
+function ledgerLocked(ledger: RaffleLedger): boolean {
+  return Boolean(ledger.bonusShuffleLocked)
+}
+
+function ticketCountLabel(ledger: RaffleLedger, copy: AppCopy): string {
+  return ledgerLocked(ledger) ? copy.ticketHome.finalTickets : copy.ticketHome.currentTickets
+}
+
+function totalTicketCountLabel(ledger: RaffleLedger, copy: AppCopy): string {
+  return ledgerLocked(ledger) ? copy.ticketHome.totalFinalTickets : copy.ticketHome.totalCurrentTickets
+}
+
+function bonusTicketNotice(ledger: RaffleLedger, copy: AppCopy): string {
+  return ledgerLocked(ledger) ? copy.ticketHome.bonusNumbersLockedNotice : copy.ticketHome.bonusNumbersNotice
+}
+
+function csvCell(value: unknown): string {
+  if (value === null || value === undefined) return ''
+  const text = String(value)
+  if (!/[",\n\r]/.test(text)) return text
+  return `"${text.replace(/"/g, '""')}"`
+}
+
+function downloadTextFile(filename: string, text: string, type = 'text/csv;charset=utf-8'): void {
+  const blob = new Blob([text], { type })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
+function ticketExportFilename(entry: RaffleEntry): string {
+  const wallet = entry.userAddress ? entry.userAddress.slice(0, 10) : 'wallet'
+  return `renaiss-ticket-ranges-${wallet}.csv`
+}
+
 function sbtLabel(entry: RaffleLeaderboardEntry, copy: AppCopy): string {
   if (entry.sbt === 'none') return copy.sbt.tiers.none
   return `${copy.sbt.tiers[entry.sbt]} x${entry.sbtMultiplier}`
@@ -116,6 +157,16 @@ function leaderboardStyle(entry: RaffleLeaderboardEntry, totalTickets: number): 
 }
 
 function leaderboardIdentity(entry: RaffleLeaderboardEntry, walletIdentities: WalletIdentityMap) {
+  const entryIdentityName =
+    entry.identity?.username?.trim() || entry.identity?.linkedTwitter?.trim() || entry.identity?.linkedDiscord?.trim()
+  if (entryIdentityName) {
+    return {
+      displayName: entryIdentityName,
+      identityAddress: entry.identityAddress || entry.userAddress,
+      hasIdentity: true,
+    }
+  }
+
   const addresses = [entry.userAddress, ...(entry.sourceAddresses ?? [])]
   for (const address of addresses) {
     const identity = walletIdentities[address.toLowerCase()]
@@ -150,6 +201,7 @@ function TopTenLeaderboard({
 
   const podium = entries.slice(0, 3)
   const rest = entries.slice(3, 10)
+  const totalTicketTitle = totalTicketCountLabel(ledger, copy)
 
   return (
     <section id="top-collectors" className="van-gogh-leaderboard" aria-label={copy.ticketHome.leaderboardTitle}>
@@ -160,7 +212,7 @@ function TopTenLeaderboard({
           <p>{copy.ticketHome.leaderboardCopy}</p>
         </div>
         <div className="van-gogh-leaderboard__total">
-          <span>{copy.ticketHome.totalFinalTickets}</span>
+          <span>{totalTicketTitle}</span>
           <strong>{compactNumber(ledger.totalFinalTickets)}</strong>
         </div>
       </div>
@@ -262,6 +314,7 @@ export function TicketHome({
   onTicketSearchResult?: (details: TicketSearchResultDetails) => void
 }) {
   const [copyState, setCopyState] = useState<'idle' | 'loading' | 'copied' | 'failed'>('idle')
+  const [exportState, setExportState] = useState<ExportState>('idle')
   const [resultRevealRun, setResultRevealRun] = useState(0)
   const [submittedQuery, setSubmittedQuery] = useState('')
   const [searchPhase, setSearchPhase] = useState<SearchPhase>('idle')
@@ -321,6 +374,9 @@ export function TicketHome({
     hasSettledSearch && !displayEntry ? 'hero-empty--not-found' : '',
   ].filter(Boolean).join(' ')
   const showIdentitySuggestions = suggestionsOpen && identitySuggestions.length > 0 && !isScanningLedger
+  const ticketCountTitle = ticketCountLabel(ledger, copy)
+  const totalTicketCountTitle = totalTicketCountLabel(ledger, copy)
+  const bonusNumbersNotice = bonusTicketNotice(ledger, copy)
 
   useEffect(() => {
     return () => {
@@ -382,6 +438,7 @@ export function TicketHome({
     void Promise.resolve().then(() => {
       if (cancelled || intervalRequestRef.current !== requestId) return
       setCopyState('idle')
+      setExportState('idle')
       setIntervalEntry(null)
       setIntervalLoadError('')
 
@@ -577,6 +634,76 @@ export function TicketHome({
     }
   }
 
+  async function exportTickets() {
+    if (!displayEntry || totalIntervalCount === 0 || exportState === 'loading') return
+    setExportState('loading')
+
+    try {
+      const ticketIntervals = await intervalsForCopy()
+      if (ticketIntervals.length === 0) throw new Error('No ticket ranges to export.')
+
+      const headers = [
+        'wallet',
+        'rank',
+        'ticket_count_label',
+        'ticket_count',
+        'raw_tickets',
+        'bonus_tickets',
+        'sbt_tier',
+        'sbt_multiplier',
+        'range_type',
+        'range_label',
+        'start',
+        'end',
+        'display_start',
+        'display_end',
+        'global_draw_range',
+        'source',
+        'pack',
+        'tx_hash',
+        'timestamp',
+        'timestamp_local',
+        'block_number',
+        'ordinal',
+      ]
+      const rows = ticketIntervals.map((interval) => {
+        const rangeType = interval.namespace ?? (interval.source === 'sbt-bonus' ? 'bonus' : 'raw')
+        return [
+          displayEntry.userAddress,
+          displayEntry.rank,
+          ticketCountTitle,
+          displayEntry.finalTickets,
+          displayEntry.rawTickets,
+          displayEntry.bonusTickets,
+          displayEntry.sbt,
+          displayEntry.sbtMultiplier,
+          rangeType,
+          intervalLabel(interval),
+          interval.start,
+          interval.end,
+          interval.displayStart ?? interval.start,
+          interval.displayEnd ?? interval.end,
+          formatTicketRange(interval.start, interval.end),
+          interval.source,
+          interval.pack ? packLabel(interval.pack, copy, ledger) : '',
+          interval.txHash ?? '',
+          interval.timestamp ?? '',
+          interval.timestamp ? new Date(interval.timestamp * 1000).toLocaleString(language) : '',
+          interval.blockNumber ?? '',
+          interval.ordinal ?? '',
+        ]
+      })
+      const csv = [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\n')
+
+      downloadTextFile(ticketExportFilename(displayEntry), csv)
+      setExportState('exported')
+    } catch {
+      setExportState('failed')
+    } finally {
+      window.setTimeout(() => setExportState('idle'), 1800)
+    }
+  }
+
   return (
     <>
       <section id="tickets" className="panel hero ticket-home-hero">
@@ -674,7 +801,7 @@ export function TicketHome({
                 </strong>
               </div>
               <div className="hero-result-card hero-result-card--tickets">
-                <span>{copy.ticketHome.finalTickets}</span>
+                <span>{ticketCountTitle}</span>
                 <strong>
                   <RollingReveal value={compactNumber(displayEntry.finalTickets)} delay={RESULT_REVEAL_DELAYS_MS[1]} />
                 </strong>
@@ -740,7 +867,7 @@ export function TicketHome({
 
         <section className="hero-ledger-strip" aria-label={copy.ticketHome.ledgerSummary}>
           <div>
-            <span>{copy.ticketHome.totalFinalTickets}</span>
+            <span>{totalTicketCountTitle}</span>
             <strong>{compactNumber(ledger.totalFinalTickets)}</strong>
           </div>
           <div>
@@ -789,23 +916,42 @@ export function TicketHome({
                 </p>
               )}
             </div>
-            <button
-              className={`icon-button copy-ticket-button copy-ticket-button--${copyState}`}
-              type="button"
-              onClick={copyTickets}
-              disabled={totalIntervalCount === 0 || copyState === 'loading'}
-            >
-              <Copy size={18} />
-              <span>
-                {copyState === 'loading'
-                  ? copy.ticketHome.loadingTicketRanges
-                  : copyState === 'copied'
-                  ? copy.ticketHome.copied
-                  : copyState === 'failed'
-                    ? copy.ticketHome.copyFailed
-                    : copy.ticketHome.copyTickets}
-              </span>
-            </button>
+            <div className="ticket-actions">
+              <button
+                className={`icon-button copy-ticket-button copy-ticket-button--${copyState}`}
+                type="button"
+                onClick={copyTickets}
+                disabled={totalIntervalCount === 0 || copyState === 'loading'}
+              >
+                <Copy size={18} />
+                <span>
+                  {copyState === 'loading'
+                    ? copy.ticketHome.loadingTicketRanges
+                    : copyState === 'copied'
+                    ? copy.ticketHome.copied
+                    : copyState === 'failed'
+                      ? copy.ticketHome.copyFailed
+                      : copy.ticketHome.copyTickets}
+                </span>
+              </button>
+              <button
+                className={`icon-button copy-ticket-button copy-ticket-button--${exportState}`}
+                type="button"
+                onClick={exportTickets}
+                disabled={totalIntervalCount === 0 || exportState === 'loading'}
+              >
+                <Download size={18} />
+                <span>
+                  {exportState === 'loading'
+                    ? copy.ticketHome.loadingTicketRanges
+                    : exportState === 'exported'
+                    ? copy.ticketHome.exported
+                    : exportState === 'failed'
+                      ? copy.ticketHome.exportFailed
+                      : copy.ticketHome.exportTickets}
+                </span>
+              </button>
+            </div>
           </div>
 
           {displayEntry && totalIntervalCount > 0 ? (
@@ -859,7 +1005,7 @@ export function TicketHome({
                         <span>{copy.ticketHome.bonusTicketNumbers}</span>
                         <strong>{compactNumber(displayEntry.bonusTickets)} B</strong>
                       </div>
-                      <p className="bonus-provisional-note">{copy.ticketHome.bonusNumbersNotice}</p>
+                      <p className="bonus-provisional-note">{bonusNumbersNotice}</p>
                       {bonusIntervals.map((interval, index) => (
                         <article
                           className="interval-row rolling-interval-row interval-row--bonus"
@@ -942,7 +1088,7 @@ export function TicketHome({
                 <strong>{displayEntry ? compactNumber(displayEntry.bonusTickets) : '-'}</strong>
               </div>
               <div>
-                <span>{copy.ticketHome.finalTickets}</span>
+                <span>{ticketCountTitle}</span>
                 <strong>{displayEntry ? compactNumber(displayEntry.finalTickets) : '-'}</strong>
               </div>
               <div>
@@ -972,7 +1118,7 @@ export function TicketHome({
           <section className="panel ledger-mini-panel">
             <Gem size={24} />
             <div>
-              <span>{copy.ticketHome.totalFinalTickets}</span>
+              <span>{totalTicketCountTitle}</span>
               <strong>{compactNumber(ledger.totalFinalTickets)}</strong>
               <small>
                 {compactNumber(ledger.totalEntries)}{' '}

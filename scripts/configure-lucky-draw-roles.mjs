@@ -3,7 +3,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { Contract, JsonRpcProvider, Wallet, ethers } from 'ethers'
 
 const ARTIFACT_FILE = new URL('../artifacts/contracts/RenaissLuckyDraw.sol/RenaissLuckyDraw.json', import.meta.url)
-const DEFAULT_CONTRACT_ADDRESS = '0xd1Cb4a9858ce6216b272895D0BB1839bC7B4da0d'
+const DEFAULT_CONTRACT_ADDRESS = '0x12f25d4f664560B59b4C18fb02bF582627CCA3Fe'
+const DEFAULT_OWNER_ADDRESS = '0x88b620388698490764fd85cfa482b5e3a8ad63b5'
 const DEFAULT_OPERATOR_ADDRESS = '0x88b620388698490764fd85cfa482b5e3a8ad63b5'
 
 function argValue(name) {
@@ -37,6 +38,23 @@ function addressValue(value, label) {
   return ethers.getAddress(value)
 }
 
+function addressListValue(value, label) {
+  if (!value) return []
+  return String(value)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item, index) => addressValue(item, `${label}[${index}]`))
+}
+
+async function readAdminState(contract, address) {
+  try {
+    return Boolean(await contract.isAdmin(address))
+  } catch {
+    return null
+  }
+}
+
 const envFilePath = argValue('--env-file') || process.env.DEPLOY_ENV_FILE || '.env.deploy.local'
 const env = { ...loadEnvFile(envFilePath), ...process.env }
 const broadcast = process.argv.includes('--broadcast')
@@ -51,9 +69,11 @@ const targetOperator = addressValue(
   'operator',
 )
 const targetOwner = addressValue(
-  argValue('--owner') || env.DRAW_OWNER_ADDRESS || env.DRAW_OPERATOR_ADDRESS || targetOperator,
+  argValue('--owner') || env.DRAW_OWNER_ADDRESS || DEFAULT_OWNER_ADDRESS,
   'owner',
 )
+const targetAdminAdds = addressListValue(argValue('--admin') || env.DRAW_ADMIN_ADDRESSES, 'admin')
+const targetAdminRemoves = addressListValue(argValue('--remove-admin') || env.DRAW_ADMIN_REMOVE_ADDRESSES, 'remove-admin')
 
 const expectedChainId = BigInt(env.BSC_CHAIN_ID || 56)
 const provider = new JsonRpcProvider(required(env, 'BSC_RPC_URL'), Number(expectedChainId))
@@ -67,6 +87,15 @@ const artifact = JSON.parse(readFileSync(ARTIFACT_FILE, 'utf8'))
 const raffle = new Contract(contractAddress, artifact.abi, wallet)
 const currentOwner = ethers.getAddress(await raffle.owner())
 const currentOperator = ethers.getAddress(await raffle.drawOperator())
+const adminPlans = await Promise.all(
+  [
+    ...targetAdminAdds.map((admin) => ({ admin, allowed: true })),
+    ...targetAdminRemoves.map((admin) => ({ admin, allowed: false })),
+  ].map(async (change) => ({
+    ...change,
+    currentAllowed: await readAdminState(raffle, change.admin),
+  })),
+)
 const txs = []
 
 const planned = {
@@ -81,8 +110,10 @@ const planned = {
   currentOperator,
   targetOwner,
   targetOperator,
+  adminPlans,
   willSetOperator: currentOperator.toLowerCase() !== targetOperator.toLowerCase(),
   willTransferOwner: currentOwner.toLowerCase() !== targetOwner.toLowerCase(),
+  willSetAdmins: adminPlans.some((change) => change.currentAllowed !== change.allowed),
   willAcceptOwnership: acceptOwnership,
 }
 
@@ -106,6 +137,19 @@ if (planned.willSetOperator) {
   }
   const tx = await raffle.setDrawOperator(targetOperator)
   txs.push({ step: 'setDrawOperator', operator: targetOperator, hash: tx.hash })
+  await tx.wait()
+}
+
+for (const change of adminPlans) {
+  if (change.currentAllowed === change.allowed) continue
+  if (change.currentAllowed === null) {
+    throw new Error(`Contract ${contractAddress} does not support setAdmin/isAdmin. Deploy the multi-admin contract first.`)
+  }
+  if (wallet.address.toLowerCase() !== currentOwner.toLowerCase()) {
+    throw new Error(`Only current owner ${currentOwner} can set draw admins. Signer is ${wallet.address}.`)
+  }
+  const tx = await raffle.setAdmin(change.admin, change.allowed)
+  txs.push({ step: 'setAdmin', admin: change.admin, allowed: change.allowed, hash: tx.hash })
   await tx.wait()
 }
 

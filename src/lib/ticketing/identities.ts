@@ -21,7 +21,7 @@ interface WalletIdentitiesPayload {
   identities?: WalletIdentityMap
 }
 
-const WALLET_IDENTITIES_URL = '/lucky-draw-identities.json'
+const WALLET_IDENTITIES_URL = '/api/participant-identities'
 
 export async function loadWalletIdentities(): Promise<WalletIdentityMap> {
   const response = await fetch(WALLET_IDENTITIES_URL, { cache: 'no-store' })

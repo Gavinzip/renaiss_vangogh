@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { Contract, ContractFactory, JsonRpcProvider, Wallet, ethers } from 'ethers'
 
 const ARTIFACT_FILE = new URL('../artifacts/contracts/RenaissLuckyDraw.sol/RenaissLuckyDraw.json', import.meta.url)
+const DEFAULT_OWNER_ADDRESS = '0x88b620388698490764fd85cfa482b5e3a8ad63b5'
+const DEFAULT_OPERATOR_ADDRESS = '0x88b620388698490764fd85cfa482b5e3a8ad63b5'
 
 const COORDINATOR_ABI = [
   'function createSubscription() external returns (uint64 subId)',
@@ -66,6 +68,19 @@ function optionalAddress(key, fallback) {
   return ethers.getAddress(value)
 }
 
+function optionalAddressList(key) {
+  const value = env[key]
+  if (!value) return []
+  return String(value)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item, index) => {
+      if (!ethers.isAddress(item)) throw new Error(`${key}[${index}] must be a valid EVM address.`)
+      return ethers.getAddress(item)
+    })
+}
+
 function parseSubscriptionId(receipt, coordinator) {
   for (const log of receipt.logs) {
     try {
@@ -110,8 +125,9 @@ const requestConfirmations = optionalInt('VRF_REQUEST_CONFIRMATIONS', 3)
 const callbackGasLimit = optionalInt('VRF_CALLBACK_GAS_LIMIT', 200000)
 const initialPrizeSlotCount = optionalInt('INITIAL_PRIZE_SLOT_COUNT', 21)
 const configuredSubscriptionId = env.VRF_SUBSCRIPTION_ID ? BigInt(env.VRF_SUBSCRIPTION_ID) : 0n
-const targetDrawOperator = optionalAddress('DRAW_OPERATOR_ADDRESS', '0x88b620388698490764fd85cfa482b5e3a8ad63b5')
-const targetOwner = optionalAddress('DRAW_OWNER_ADDRESS', env.DRAW_OPERATOR_ADDRESS || targetDrawOperator)
+const targetDrawOperator = optionalAddress('DRAW_OPERATOR_ADDRESS', DEFAULT_OPERATOR_ADDRESS)
+const targetOwner = optionalAddress('DRAW_OWNER_ADDRESS', DEFAULT_OWNER_ADDRESS)
+const targetAdminAddresses = optionalAddressList('DRAW_ADMIN_ADDRESSES')
 
 const safeConfig = {
   envFile: envFilePath,
@@ -128,6 +144,7 @@ const safeConfig = {
   initialPrizeSlotCount,
   targetDrawOperator,
   targetOwner,
+  targetAdminAddresses,
 }
 
 if (!broadcast) {
@@ -193,6 +210,12 @@ if (targetDrawOperator && targetDrawOperator.toLowerCase() !== wallet.address.to
   await operatorTx.wait()
 }
 
+for (const adminAddress of targetAdminAddresses) {
+  const adminTx = await raffle.setAdmin(adminAddress, true)
+  txs.push({ step: 'setAdmin', admin: adminAddress, allowed: true, hash: adminTx.hash })
+  await adminTx.wait()
+}
+
 let ownerTransferPending = false
 if (targetOwner && targetOwner.toLowerCase() !== wallet.address.toLowerCase()) {
   const ownerTx = await raffle.transferOwnership(targetOwner)
@@ -210,10 +233,11 @@ console.log(
       owner: ownerTransferPending ? wallet.address : targetOwner || wallet.address,
       pendingOwner: ownerTransferPending ? targetOwner : null,
       drawOperator: targetDrawOperator || wallet.address,
+      drawAdmins: targetAdminAddresses,
       subscriptionId: subscriptionId.toString(),
       raffle: raffleAddress,
       frontendContractAddress: raffleAddress,
-      frontendNote: 'Update src/lib/contracts/luckyDrawAbi.ts if this deployment becomes the active draw contract.',
+      frontendNote: 'Update src/lib/contracts/luckyDrawNetworks.ts if this deployment becomes the active draw contract.',
       txs,
     },
     null,

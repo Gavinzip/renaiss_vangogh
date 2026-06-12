@@ -27,17 +27,36 @@ function normalizeSbt(value: unknown): SbtTier {
   return ['brown', 'silver', 'gold', 'rainbow'].includes(text) ? (text as SbtTier) : 'none'
 }
 
+function normalizeIdentity(value: unknown): RaffleLeaderboardEntry['identity'] {
+  if (!value || typeof value !== 'object') return null
+  const identity = value as NonNullable<RaffleLeaderboardEntry['identity']>
+  const username = String(identity.username || '').trim() || null
+  const linkedTwitter = String(identity.linkedTwitter || '').trim() || null
+  const linkedDiscord = String(identity.linkedDiscord || '').trim() || null
+  return username || linkedTwitter || linkedDiscord
+    ? {
+        username,
+        linkedTwitter,
+        linkedDiscord,
+      }
+    : null
+}
+
 function normalizeLeaderboardEntry(value: unknown, index: number): RaffleLeaderboardEntry | null {
   if (!value || typeof value !== 'object') return null
   const entry = value as Partial<RaffleLeaderboardEntry>
   const userAddress = normalizeAddress(entry.userAddress)
   if (!userAddress) return null
   const sourceAddresses = (entry.sourceAddresses || [userAddress]).map(normalizeAddress).filter(Boolean)
+  const identity = normalizeIdentity(entry.identity)
+  const identityAddress = normalizeAddress(entry.identityAddress)
 
   return {
     rank: Number(entry.rank || index + 1),
     userAddress,
     sourceAddresses,
+    identity,
+    identityAddress: identity && identityAddress ? identityAddress : null,
     rawTickets: toInteger(entry.rawTickets),
     bonusTickets: toInteger(entry.bonusTickets),
     finalTickets: toInteger(entry.finalTickets),
