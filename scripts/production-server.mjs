@@ -61,6 +61,50 @@ let lastBackup = {
   trigger: null,
 }
 
+function getLedgerLockState() {
+  if (!existsSync(ledgerPath)) {
+    return {
+      locked: false,
+      reason: 'missing-ledger',
+      generatedAt: 0,
+      campaignEnd: 0,
+      bonusShuffleLocked: false,
+    }
+  }
+
+  try {
+    const ledger = readLedgerPayload(ledgerPath)
+    const generatedAt = Number(ledger.generatedAt || 0)
+    const campaignEnd = Number(ledger.campaignEnd || 0)
+    const bonusShuffleLocked = Boolean(ledger.bonusShuffleLocked)
+    const locked = bonusShuffleLocked && campaignEnd > 0 && generatedAt >= campaignEnd
+
+    return {
+      locked,
+      reason: locked ? 'final-ledger-locked' : 'ledger-not-final',
+      generatedAt,
+      campaignEnd,
+      bonusShuffleLocked,
+    }
+  } catch (error) {
+    return {
+      locked: false,
+      reason: 'ledger-read-failed',
+      generatedAt: 0,
+      campaignEnd: 0,
+      bonusShuffleLocked: false,
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
+}
+
+function stopLedgerRefreshTimer(reason) {
+  if (!refreshTimer) return
+  clearInterval(refreshTimer)
+  refreshTimer = null
+  console.log(`[ledger-refresh] interval stopped reason=${reason}`)
+}
+
 function readIntegerEnv(name, fallback, min = 0) {
   const raw = process.env[name]
   if (raw === undefined || raw === '') return fallback
@@ -310,6 +354,26 @@ function runDataBackup(trigger) {
 
 function runLedgerRefresh(trigger) {
   if (refreshRunning) return
+  const lockState = getLedgerLockState()
+  if (lockState.locked) {
+    stopLedgerRefreshTimer('final-ledger-locked')
+    lastRefresh = {
+      ok: true,
+      startedAt: null,
+      finishedAt: new Date().toISOString(),
+      exitCode: 0,
+      error: null,
+      trigger,
+      skipped: true,
+      reason: lockState.reason,
+      ledgerLock: lockState,
+    }
+    console.log(
+      `[ledger-refresh] skip trigger=${trigger} reason=${lockState.reason} generatedAt=${lockState.generatedAt} campaignEnd=${lockState.campaignEnd}`,
+    )
+    return
+  }
+
   refreshRunning = true
   lastRefresh = {
     ok: false,
@@ -359,7 +423,11 @@ function runLedgerRefresh(trigger) {
     }
     if (snapshotPath) console.log(`[ledger-refresh] snapshot ${snapshotPath}`)
     console.log(`[ledger-refresh] finish trigger=${trigger} code=${code}`)
-    if (code === 0) runDataBackup('ledger-refresh')
+    if (code === 0) {
+      const nextLockState = getLedgerLockState()
+      if (nextLockState.locked) stopLedgerRefreshTimer('final-ledger-locked')
+      runDataBackup('ledger-refresh')
+    }
   })
   child.on('error', (error) => {
     refreshRunning = false
@@ -391,6 +459,7 @@ const server = createServer((request, response) => {
         snapshotDir,
         snapshotKeep,
         ledgerExists: existsSync(ledgerPath),
+        ledgerLock: getLedgerLockState(),
         identityLookupExists: existsSync(identityLookupPath),
         refreshMinutes,
         refreshRunning,
@@ -528,8 +597,13 @@ server.listen(port, () => {
   console.log(`[server] data dir ${dataDir}`)
   console.log(`[server] ledger path ${ledgerPath}`)
   console.log(`[server] backup ${backupEnabled ? 'enabled' : 'disabled'}`)
-  runLedgerRefresh('startup')
-  refreshTimer = setInterval(() => runLedgerRefresh('interval'), refreshIntervalMs)
+  const ledgerLock = getLedgerLockState()
+  if (ledgerLock.locked) {
+    runLedgerRefresh('startup')
+  } else {
+    runLedgerRefresh('startup')
+    refreshTimer = setInterval(() => runLedgerRefresh('interval'), refreshIntervalMs)
+  }
   if (backupEnabled) backupTimer = setInterval(() => runDataBackup('interval'), backupIntervalMs)
 })
 
