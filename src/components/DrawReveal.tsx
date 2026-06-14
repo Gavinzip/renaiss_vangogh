@@ -1,4 +1,4 @@
-import { FastForward, Loader2, Play, RotateCcw, Sparkles } from 'lucide-react'
+import { FastForward, Loader2, Play, RotateCcw, Sparkles, X } from 'lucide-react'
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { gsap } from 'gsap'
 import goldTicketImage from '../assets/gold-ticket-transparent.webp'
@@ -48,12 +48,29 @@ const DEMO_WINNER_TICKETS_BY_SLOT = [
 ] as const
 
 type DrawResultSource = 'contract' | 'demo'
+interface DrawReserveResult {
+  owner: WinnerCandidate | null
+  reserveRank: number
+  ticket: string
+}
+
 interface DrawWinnerResult {
   owner: WinnerCandidate | null
   prizeGroupId: PrizeGroupId
   prizeOrdinal: number
+  reserves: DrawReserveResult[]
   slotIndex: number
   source: DrawResultSource
+  ticket: string
+}
+
+interface WinnerStackCard {
+  address: string
+  kind: 'primary' | 'reserve'
+  label: string
+  name: string
+  prize: string
+  slotIndex: number
   ticket: string
 }
 
@@ -78,9 +95,11 @@ function buildWinnerResult({
   slotIndex,
   source,
   ticket,
+  reserveTickets = [],
 }: {
   identities: WalletIdentityMap
   ledger: RaffleLedger
+  reserveTickets?: readonly (bigint | string)[]
   slotIndex: number
   source: DrawResultSource
   ticket: bigint | string
@@ -91,6 +110,14 @@ function buildWinnerResult({
     owner: findWinnerCandidate({ winnerTicket: BigInt(ticketNumber), ledger, identities }),
     prizeGroupId: prizeGroup.id,
     prizeOrdinal: prizeOrdinalInGroup(slotIndex),
+    reserves: reserveTickets.map((reserveTicket, index) => {
+      const reserveTicketNumber = reserveTicket.toString()
+      return {
+        owner: findWinnerCandidate({ winnerTicket: BigInt(reserveTicketNumber), ledger, identities }),
+        reserveRank: index + 1,
+        ticket: reserveTicketNumber,
+      }
+    }),
     slotIndex,
     source,
     ticket: ticketNumber,
@@ -101,6 +128,7 @@ export function DrawReveal({
   runMode,
   onRunModeChange,
   winnerTicketsBySlot,
+  reserveTicketsBySlot,
   revealedPrizeSlots,
   totalTickets,
   ledger,
@@ -122,6 +150,7 @@ export function DrawReveal({
   runMode: DrawRunMode
   onRunModeChange: (mode: DrawRunMode) => void
   winnerTicketsBySlot: bigint[]
+  reserveTicketsBySlot: bigint[][]
   revealedPrizeSlots: bigint[]
   totalTickets: number
   ledger: RaffleLedger
@@ -149,6 +178,8 @@ export function DrawReveal({
   const [revealedContractResults, setRevealedContractResults] = useState<DrawWinnerResult[]>([])
   const [currentReveal, setCurrentReveal] = useState<DrawWinnerResult | null>(null)
   const [currentBatchReveal, setCurrentBatchReveal] = useState<DrawWinnerResult[]>([])
+  const [selectedWinnerResult, setSelectedWinnerResult] = useState<DrawWinnerResult | null>(null)
+  const [selectedWinnerCardIndex, setSelectedWinnerCardIndex] = useState(0)
   const [isSequenceRunning, setIsSequenceRunning] = useState(false)
   const [sequenceMessage, setSequenceMessage] = useState('')
   const [videoReady, setVideoReady] = useState(false)
@@ -192,13 +223,14 @@ export function DrawReveal({
           return buildWinnerResult({
             identities: walletIdentities,
             ledger,
+            reserveTickets: reserveTicketsBySlot[slotIndex] ?? [],
             slotIndex,
             source: 'contract',
             ticket,
           })
         })
         .filter((result): result is DrawWinnerResult => Boolean(result)),
-    [ledger, revealedPrizeSlotIndexes, walletIdentities, winnerTicketsBySlot],
+    [ledger, reserveTicketsBySlot, revealedPrizeSlotIndexes, walletIdentities, winnerTicketsBySlot],
   )
   const isLiveRunMode = isDrawNetworkKey(runMode)
   const visibleResults = isLiveRunMode ? (isSequenceRunning ? revealedContractResults : contractResults) : demoResults
@@ -367,6 +399,37 @@ export function DrawReveal({
     return result.owner?.address ?? copy.drawReveal.noWalletName
   }
 
+  function reserveOwnerName(result: DrawReserveResult) {
+    return result.owner?.displayName ?? copy.drawReveal.unknownWinner
+  }
+
+  function reserveOwnerAddress(result: DrawReserveResult) {
+    return result.owner?.address ?? copy.drawReveal.noWalletName
+  }
+
+  function winnerStackCards(result: DrawWinnerResult): WinnerStackCard[] {
+    return [
+      {
+        address: ownerAddress(result),
+        kind: 'primary',
+        label: copy.drawReveal.primaryWinner,
+        name: ownerName(result),
+        prize: prizeRewards[result.prizeGroupId],
+        slotIndex: result.slotIndex,
+        ticket: result.ticket,
+      },
+      ...result.reserves.map((reserve) => ({
+        address: reserveOwnerAddress(reserve),
+        kind: 'reserve' as const,
+        label: `${copy.drawReveal.reserveWinner} #${reserve.reserveRank}`,
+        name: reserveOwnerName(reserve),
+        prize: prizeRewards[result.prizeGroupId],
+        slotIndex: result.slotIndex,
+        ticket: reserve.ticket,
+      })),
+    ]
+  }
+
   const centerRevealStage = useCallback(() => {
     function alignToSafeCenter(behavior: ScrollBehavior) {
       const stage = rootRef.current?.querySelector('.draw-reveal-stage')
@@ -530,7 +593,10 @@ export function DrawReveal({
       setDemoResults((current) => {
         const nextResults = [...current]
         for (const result of demoReveals) {
-          if (!nextResults.some((item) => item.slotIndex === result.slotIndex)) {
+          const existingIndex = nextResults.findIndex((item) => item.slotIndex === result.slotIndex)
+          if (existingIndex >= 0) {
+            nextResults[existingIndex] = result
+          } else {
             nextResults.push(result)
           }
         }
@@ -542,7 +608,10 @@ export function DrawReveal({
       setRevealedContractResults((current) => {
         const nextResults = [...current]
         for (const result of contractReveals) {
-          if (!nextResults.some((item) => item.slotIndex === result.slotIndex)) {
+          const existingIndex = nextResults.findIndex((item) => item.slotIndex === result.slotIndex)
+          if (existingIndex >= 0) {
+            nextResults[existingIndex] = result
+          } else {
             nextResults.push(result)
           }
         }
@@ -723,10 +792,11 @@ export function DrawReveal({
         }
 
         const revealResultsFromContract = await onDrawContractPrizeSlots(selectedTargetSlots)
-        const contractReveals = revealResultsFromContract.map(({ prizeSlotIndex, ticket }) =>
+        const contractReveals = revealResultsFromContract.map(({ prizeSlotIndex, reserveTickets, ticket }) =>
           buildWinnerResult({
             identities: walletIdentities,
             ledger,
+            reserveTickets,
             slotIndex: prizeSlotIndex,
             source: 'contract',
             ticket,
@@ -836,9 +906,11 @@ export function DrawReveal({
 
   function selectRunMode(nextRunMode: DrawRunMode) {
     if (nextRunMode === runMode) return
+    sequenceLockRef.current = false
     cancelVideoPlaybackWait()
     clearActiveRevealDisplay()
     setSequenceMessage('')
+    setIsSequenceRunning(false)
     setRevealedContractResults([])
     onRunModeChange(nextRunMode)
     const nextResults = isDrawNetworkKey(nextRunMode) ? [] : demoResults
@@ -1102,6 +1174,29 @@ export function DrawReveal({
       { autoAlpha: 1, y: 0, scale: 1, duration: reduceMotion ? 0 : 0.48, stagger: reduceMotion ? 0 : 0.035, ease: 'power3.out', overwrite: 'auto' },
     )
   }, [visibleResults.length])
+
+  useEffect(() => {
+    if (!selectedWinnerResult) return undefined
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setSelectedWinnerResult(null)
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [selectedWinnerResult])
+
+  const selectedWinnerCards = selectedWinnerResult ? winnerStackCards(selectedWinnerResult) : []
+  const selectedWinnerCardSafeIndex = selectedWinnerCards.length ? selectedWinnerCardIndex % selectedWinnerCards.length : 0
+  const selectedWinnerCard = selectedWinnerCards[selectedWinnerCardSafeIndex] ?? null
+  const canCycleWinnerCards = selectedWinnerCards.length > 1
+
+  function selectWinnerCardIndex(nextIndex: number) {
+    if (!selectedWinnerCards.length) return
+    setSelectedWinnerCardIndex((nextIndex + selectedWinnerCards.length) % selectedWinnerCards.length)
+  }
 
   return (
     <section className="panel draw-reveal-panel" ref={rootRef}>
@@ -1408,7 +1503,7 @@ export function DrawReveal({
         </section>
       )}
 
-      <section className={`draw-winner-board ${isAllComplete ? 'is-complete' : ''}`} aria-live="polite">
+      <section className={`draw-winner-board ${isAllComplete ? 'is-complete' : ''}${selectedWinnerResult ? ' has-detail' : ''}`} aria-live="polite">
         <div className="draw-winner-board-head">
           <div>
             <span>{copy.drawReveal.winnerBoard}</span>
@@ -1420,6 +1515,66 @@ export function DrawReveal({
             </small>
           )}
         </div>
+
+        {selectedWinnerResult && selectedWinnerCard && (
+          <div
+            className="draw-winner-detail-layer"
+            onMouseDown={(event) => {
+              if (event.currentTarget === event.target) setSelectedWinnerResult(null)
+            }}
+          >
+            <section className="draw-winner-detail-panel" aria-label={copy.drawReveal.reserveList}>
+              <button className="draw-winner-detail-close" type="button" onClick={() => setSelectedWinnerResult(null)} aria-label={copy.drawReveal.closeWinnerStack}>
+                <X size={18} />
+              </button>
+
+              <div className="draw-winner-detail-copy">
+                <span>
+                  {copy.drawReveal.slotLabel} #{selectedWinnerResult.slotIndex + 1}
+                </span>
+                <h3>{prizeLabels[selectedWinnerResult.prizeGroupId]}</h3>
+              </div>
+
+              <div className="draw-winner-reserve-viewer">
+                <article className={`draw-winner-stack-card is-${selectedWinnerCard.kind}`}>
+                  <span>{selectedWinnerCard.label}</span>
+                  <strong>#{formatDrawTicketNumber(selectedWinnerCard.ticket, totalTickets)}</strong>
+                  <small>{selectedWinnerCard.prize}</small>
+                  <div>
+                    <b>{selectedWinnerCard.name}</b>
+                    <em title={selectedWinnerCard.address}>{selectedWinnerCard.address}</em>
+                  </div>
+                </article>
+
+                <div className="draw-winner-reserve-controls">
+                  <button type="button" onClick={() => selectWinnerCardIndex(selectedWinnerCardSafeIndex - 1)} disabled={!canCycleWinnerCards}>
+                    {copy.drawReveal.previousWinnerCard}
+                  </button>
+                  <span>
+                    {copy.drawReveal.winnerStackPosition} {selectedWinnerCardSafeIndex + 1} / {selectedWinnerCards.length}
+                  </span>
+                  <button type="button" onClick={() => selectWinnerCardIndex(selectedWinnerCardSafeIndex + 1)} disabled={!canCycleWinnerCards}>
+                    {copy.drawReveal.nextWinnerCard}
+                  </button>
+                </div>
+
+                <div className="draw-winner-reserve-rail">
+                  {selectedWinnerCards.map((card, index) => (
+                    <button
+                      className={index === selectedWinnerCardSafeIndex ? 'is-active' : ''}
+                      key={`${card.kind}-${card.ticket}`}
+                      onClick={() => selectWinnerCardIndex(index)}
+                      type="button"
+                    >
+                      <span>{card.label}</span>
+                      <strong>#{formatDrawTicketNumber(card.ticket, totalTickets)}</strong>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </section>
+          </div>
+        )}
 
         <div className="draw-winner-groups">
           {PRIZE_GROUPS.map((group) => {
@@ -1435,15 +1590,25 @@ export function DrawReveal({
                 <div className="draw-winner-card-grid">
                   {groupResults.length > 0 ? (
                     groupResults.map((result) => (
-                      <div className="draw-winner-card" key={`${result.source}-${result.slotIndex}-${result.ticket.toString()}`}>
-                        <span>{copy.drawReveal.slotLabel} #{result.slotIndex + 1}</span>
+                      <button
+                        className="draw-winner-card"
+                        key={`${result.source}-${result.slotIndex}-${result.ticket.toString()}`}
+                        onClick={() => {
+                          setSelectedWinnerCardIndex(0)
+                          setSelectedWinnerResult(result)
+                        }}
+                        type="button"
+                      >
+                        <span>
+                          {copy.drawReveal.primaryWinner} · {copy.drawReveal.slotLabel} #{result.slotIndex + 1}
+                        </span>
                         <strong>#{formatDrawTicketNumber(result.ticket, totalTickets)}</strong>
                         <small>{prizeRewards[result.prizeGroupId]}</small>
-                        <div>
+                        <div className="draw-winner-identity">
                           <b>{ownerName(result)}</b>
                           <em title={ownerAddress(result)}>{ownerAddress(result)}</em>
                         </div>
-                      </div>
+                      </button>
                     ))
                   ) : (
                     <p>{copy.drawReveal.noWinnersYet}</p>

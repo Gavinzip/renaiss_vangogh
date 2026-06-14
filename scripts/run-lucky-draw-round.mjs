@@ -84,11 +84,13 @@ const ledger = JSON.parse(readFileSync(new URL(`../${ledgerPath}`, import.meta.u
 const ledgerHash = String(ledger.ledgerHash || '')
 const totalTickets = BigInt(ledger.totalFinalTickets || 0)
 const prizeSlotCount = BigInt(argValue('--prize-slots') || env.INITIAL_PRIZE_SLOT_COUNT || 21)
+const expectedReserveCount = (slotIndex) => (slotIndex === 0 ? 4 : 3)
+const expectedTotalUniqueTickets = Number(prizeSlotCount) * 4 + 1
 const batchSize = Math.max(1, Number(argValue('--batch-size') || env.DRAW_BATCH_SIZE || 1))
 const revealOrder = parseRevealOrder(argValue('--reveal-order') || env.DRAW_REVEAL_ORDER || '', prizeSlotCount)
 if (!/^0x[a-fA-F0-9]{64}$/.test(ledgerHash)) throw new Error('ledgerHash must be bytes32')
 if (ledger.candidateSourceLimited) throw new Error('cannot run draw round with a limited candidate ledger')
-if (totalTickets < prizeSlotCount) throw new Error('ledger total tickets must cover all prize slots')
+if (totalTickets < BigInt(expectedTotalUniqueTickets)) throw new Error('ledger total tickets must cover all prize and reserve slots')
 
 const expectedChainId = BigInt(env.BSC_CHAIN_ID || 56)
 const provider = new JsonRpcProvider(required(env, 'BSC_RPC_URL'), Number(expectedChainId))
@@ -147,7 +149,7 @@ while (!status.fulfilled && status.winnerCount < prizeSlotCount) {
       ? await raffle.drawPrizeSlot(nextPrizeSlots[0])
       : await raffle.drawPrizeSlots(nextPrizeSlots)
   const receipt = await drawTx.wait()
-  const winnerEvents = receipt.logs
+  const parsedLogs = receipt.logs
     .map((log) => {
       try {
         return raffle.interface.parseLog(log)
@@ -155,9 +157,15 @@ while (!status.fulfilled && status.winnerCount < prizeSlotCount) {
         return null
       }
     })
+  const winnerEvents = parsedLogs
     .filter((event) => event?.name === 'PrizeWinnerDrawn')
   if (winnerEvents.length !== nextPrizeSlots.length) {
     throw new Error(`expected ${nextPrizeSlots.length} PrizeWinnerDrawn events, got ${winnerEvents.length}.`)
+  }
+  const reserveEvents = parsedLogs.filter((event) => event?.name === 'PrizeReserveWinnerDrawn')
+  const expectedReserveEvents = nextPrizeSlots.reduce((sum, slotIndex) => sum + expectedReserveCount(slotIndex), 0)
+  if (reserveEvents.length !== expectedReserveEvents) {
+    throw new Error(`expected ${expectedReserveEvents} PrizeReserveWinnerDrawn events, got ${reserveEvents.length}.`)
   }
   for (let index = 0; index < winnerEvents.length; index++) {
     const winnerEvent = winnerEvents[index]
@@ -172,6 +180,12 @@ while (!status.fulfilled && status.winnerCount < prizeSlotCount) {
     prizeSlotIndexes: winnerEvents.map((event) => event.args.prizeSlotIndex.toString()),
     revealIndexes: winnerEvents.map((event) => event.args.revealIndex.toString()),
     ticketNumbers: winnerEvents.map((event) => event.args.ticketNumber.toString()),
+    reserveTicketNumbersBySlot: nextPrizeSlots.map((slotIndex) => ({
+      prizeSlotIndex: String(slotIndex),
+      reserveTickets: reserveEvents
+        .filter((event) => Number(event.args.prizeSlotIndex) === slotIndex)
+        .map((event) => event.args.ticketNumber.toString()),
+    })),
     hash: drawTx.hash,
   })
   status = parseRoundStatus(await raffle.roundStatus())
@@ -182,7 +196,14 @@ const winnerTicketsBySlot = await raffle.winnerTicketsBySlot()
 revealedPrizeSlots = await raffle.revealedPrizeSlots()
 const storedRevealedTickets = await raffle.revealedTickets()
 const winnerTickets = await raffle.winnerTickets()
-const unique = new Set(winnerTicketsBySlot.map((ticket) => ticket.toString()))
+const reserveTicketsBySlot = await Promise.all(
+  Array.from({ length: Number(prizeSlotCount) }, (_, index) => raffle.reserveTicketsBySlot(index)),
+)
+const allAwardedTickets = [
+  ...winnerTicketsBySlot,
+  ...reserveTicketsBySlot.flat(),
+]
+const unique = new Set(allAwardedTickets.map((ticket) => ticket.toString()))
 if (winnerTicketsBySlot.length !== Number(prizeSlotCount)) {
   throw new Error(`expected ${prizeSlotCount} slot winners, got ${winnerTicketsBySlot.length}`)
 }
@@ -192,9 +213,12 @@ if (storedRevealedTickets.length !== Number(prizeSlotCount)) {
 if (revealedPrizeSlots.length !== Number(prizeSlotCount)) {
   throw new Error(`expected ${prizeSlotCount} revealed prize slots, got ${revealedPrizeSlots.length}`)
 }
-if (unique.size !== Number(prizeSlotCount)) throw new Error('winner tickets are not unique')
+if (unique.size !== expectedTotalUniqueTickets) throw new Error('winner and reserve tickets are not globally unique')
 for (const ticket of winnerTicketsBySlot) {
   if (ticket < 1n || ticket > totalTickets) throw new Error(`winner ticket out of range: ${ticket}`)
+}
+for (const ticket of reserveTicketsBySlot.flat()) {
+  if (ticket < 1n || ticket > totalTickets) throw new Error(`reserve ticket out of range: ${ticket}`)
 }
 for (let revealIndex = 0; revealIndex < Number(prizeSlotCount); revealIndex++) {
   const prizeSlotIndex = Number(revealedPrizeSlots[revealIndex])
@@ -203,6 +227,9 @@ for (let revealIndex = 0; revealIndex < Number(prizeSlotCount); revealIndex++) {
   }
   if (storedRevealedTickets[revealIndex] !== winnerTicketsBySlot[prizeSlotIndex]) {
     throw new Error(`reveal/slot winner mismatch at reveal ${revealIndex}`)
+  }
+  if (reserveTicketsBySlot[prizeSlotIndex].length !== expectedReserveCount(prizeSlotIndex)) {
+    throw new Error(`reserve count mismatch at slot ${prizeSlotIndex}`)
   }
 }
 
@@ -220,7 +247,11 @@ console.log(
       batchSize,
       revealOrder,
       winnerCount: winnerTicketsBySlot.length,
+      reserveTicketCount: reserveTicketsBySlot.flat().length,
+      totalUniqueAwardedTickets: unique.size,
       firstFiveWinnerTicketsBySlot: winnerTicketsBySlot.slice(0, 5).map((ticket) => ticket.toString()),
+      grandReserveTickets: reserveTicketsBySlot[0].map((ticket) => ticket.toString()),
+      firstSmallPrizeReserveTickets: reserveTicketsBySlot[1].map((ticket) => ticket.toString()),
       firstFiveRevealedTickets: storedRevealedTickets.slice(0, 5).map((ticket) => ticket.toString()),
       revealedPrizeSlots: revealedPrizeSlots.map((slot) => slot.toString()),
       revealedTickets,

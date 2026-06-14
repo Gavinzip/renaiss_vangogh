@@ -34,11 +34,17 @@ contract RenaissLuckyDraw is VRFConsumerBase {
     uint256 public randomWord;
     DrawState public state;
 
+    uint256 public constant GRAND_PRIZE_SLOT_INDEX = 0;
+    uint256 public constant GRAND_PRIZE_RESERVE_COUNT = 4;
+    uint256 public constant DEFAULT_RESERVE_COUNT = 3;
+
     uint256[] private s_winnerTicketsBySlot;
     uint256[] private s_revealedPrizeSlots;
     uint256[] private s_revealedTickets;
+    uint256[] private s_allComputedTickets;
+    mapping(uint256 => uint256[]) private s_reserveTicketsBySlot;
     bool[] private s_prizeSlotRevealed;
-    uint256 private s_computedWinnerCount;
+    uint256 private s_computedPrizeSlotCount;
 
     event DrawOperatorChanged(address indexed operator);
     event VrfConfigUpdated(
@@ -52,6 +58,12 @@ contract RenaissLuckyDraw is VRFConsumerBase {
     event RandomnessFulfilled(uint256 indexed requestId, uint256 randomWord);
     event WinnerDrawn(uint256 indexed slotIndex, uint256 ticketNumber);
     event PrizeWinnerDrawn(uint256 indexed revealIndex, uint256 indexed prizeSlotIndex, uint256 ticketNumber);
+    event PrizeReserveWinnerDrawn(
+        uint256 indexed revealIndex,
+        uint256 indexed prizeSlotIndex,
+        uint256 indexed reserveIndex,
+        uint256 ticketNumber
+    );
     event DrawFulfilled(uint256 indexed requestId, uint256 randomWord, uint256[] winnerTickets);
     event RoundReset();
     event OwnershipTransferRequested(address indexed from, address indexed to);
@@ -158,7 +170,7 @@ contract RenaissLuckyDraw is VRFConsumerBase {
         if (state != DrawState.Draft && state != DrawState.LedgerFinalized) revert InvalidState();
         if (newLedgerHash == bytes32(0) || newTotalTickets == 0) revert InvalidLedger();
         _setPrizeSlotCount(newPrizeSlotCount);
-        if (newTotalTickets < newPrizeSlotCount) revert InvalidPrizeSlots();
+        if (newTotalTickets < _requiredUniqueTicketCount(newPrizeSlotCount)) revert InvalidPrizeSlots();
 
         _resetWinnerStorage();
         ledgerHash = newLedgerHash;
@@ -300,6 +312,26 @@ contract RenaissLuckyDraw is VRFConsumerBase {
         return s_winnerTicketsBySlot[prizeSlotIndex];
     }
 
+    function reserveCountForPrizeSlot(uint256 prizeSlotIndex) public view returns (uint256) {
+        if (prizeSlotIndex >= prizeSlotCount) revert InvalidPrizeSlots();
+        return _reserveCountForPrizeSlot(prizeSlotIndex);
+    }
+
+    function reserveTicketsBySlot(uint256 prizeSlotIndex) external view returns (uint256[] memory) {
+        if (prizeSlotIndex >= prizeSlotCount) revert InvalidPrizeSlots();
+        if (prizeSlotIndex >= s_prizeSlotRevealed.length || !s_prizeSlotRevealed[prizeSlotIndex]) {
+            return new uint256[](0);
+        }
+        return s_reserveTicketsBySlot[prizeSlotIndex];
+    }
+
+    function reserveTicketBySlot(uint256 prizeSlotIndex, uint256 reserveIndex) external view returns (uint256) {
+        if (prizeSlotIndex >= prizeSlotCount) revert InvalidPrizeSlots();
+        if (reserveIndex >= _reserveCountForPrizeSlot(prizeSlotIndex)) revert InvalidPrizeSlots();
+        if (prizeSlotIndex >= s_prizeSlotRevealed.length || !s_prizeSlotRevealed[prizeSlotIndex]) return 0;
+        return s_reserveTicketsBySlot[prizeSlotIndex][reserveIndex];
+    }
+
     function roundStatus()
         external
         view
@@ -331,7 +363,7 @@ contract RenaissLuckyDraw is VRFConsumerBase {
         _preparePrizeSlotStorage();
         if (s_prizeSlotRevealed[prizeSlotIndex]) revert InvalidState();
 
-        _ensureWinnerComputed(prizeSlotIndex);
+        _ensurePrizeSlotComputed(prizeSlotIndex);
         ticketNumber = s_winnerTicketsBySlot[prizeSlotIndex];
         uint256 revealIndex = s_revealedPrizeSlots.length;
 
@@ -341,11 +373,20 @@ contract RenaissLuckyDraw is VRFConsumerBase {
 
         emit WinnerDrawn(prizeSlotIndex, ticketNumber);
         emit PrizeWinnerDrawn(revealIndex, prizeSlotIndex, ticketNumber);
+        uint256 reserveCount = s_reserveTicketsBySlot[prizeSlotIndex].length;
+        for (uint256 reserveIndex = 0; reserveIndex < reserveCount; reserveIndex++) {
+            emit PrizeReserveWinnerDrawn(
+                revealIndex,
+                prizeSlotIndex,
+                reserveIndex,
+                s_reserveTicketsBySlot[prizeSlotIndex][reserveIndex]
+            );
+        }
     }
 
     function _completeIfFulfilled() internal {
         if (s_revealedPrizeSlots.length == prizeSlotCount) {
-            _ensureWinnerComputed(prizeSlotCount - 1);
+            _ensurePrizeSlotComputed(prizeSlotCount - 1);
             state = DrawState.Fulfilled;
             emit DrawFulfilled(requestId, randomWord, s_winnerTicketsBySlot);
         }
@@ -377,11 +418,15 @@ contract RenaissLuckyDraw is VRFConsumerBase {
     }
 
     function _resetWinnerStorage() internal {
+        for (uint256 index = 0; index < s_winnerTicketsBySlot.length; index++) {
+            delete s_reserveTicketsBySlot[index];
+        }
         delete s_winnerTicketsBySlot;
         delete s_revealedPrizeSlots;
         delete s_revealedTickets;
+        delete s_allComputedTickets;
         delete s_prizeSlotRevealed;
-        s_computedWinnerCount = 0;
+        s_computedPrizeSlotCount = 0;
     }
 
     function _preparePrizeSlotStorage() internal {
@@ -393,14 +438,26 @@ contract RenaissLuckyDraw is VRFConsumerBase {
         }
     }
 
-    function _ensureWinnerComputed(uint256 prizeSlotIndex) internal {
+    function _ensurePrizeSlotComputed(uint256 prizeSlotIndex) internal {
         if (prizeSlotIndex >= prizeSlotCount) revert InvalidPrizeSlots();
         _preparePrizeSlotStorage();
 
-        while (s_computedWinnerCount <= prizeSlotIndex) {
-            uint256 computedSlotIndex = s_computedWinnerCount;
-            s_winnerTicketsBySlot[computedSlotIndex] = _drawUniqueTicket(randomWord, computedSlotIndex);
-            s_computedWinnerCount++;
+        while (s_computedPrizeSlotCount <= prizeSlotIndex) {
+            uint256 computedSlotIndex = s_computedPrizeSlotCount;
+            delete s_reserveTicketsBySlot[computedSlotIndex];
+
+            uint256 primaryTicket = _drawUniqueTicket(randomWord, s_allComputedTickets.length);
+            s_winnerTicketsBySlot[computedSlotIndex] = primaryTicket;
+            s_allComputedTickets.push(primaryTicket);
+
+            uint256 reserveCount = _reserveCountForPrizeSlot(computedSlotIndex);
+            for (uint256 reserveIndex = 0; reserveIndex < reserveCount; reserveIndex++) {
+                uint256 reserveTicket = _drawUniqueTicket(randomWord, s_allComputedTickets.length);
+                s_reserveTicketsBySlot[computedSlotIndex].push(reserveTicket);
+                s_allComputedTickets.push(reserveTicket);
+            }
+
+            s_computedPrizeSlotCount++;
         }
     }
 
@@ -426,13 +483,13 @@ contract RenaissLuckyDraw is VRFConsumerBase {
         revert InvalidState();
     }
 
-    function _drawUniqueTicket(uint256 seed, uint256 slotIndex) internal view returns (uint256) {
+    function _drawUniqueTicket(uint256 seed, uint256 pickIndex) internal view returns (uint256) {
         uint256 nonce = 0;
         while (nonce < totalTickets) {
-            uint256 candidate = (uint256(keccak256(abi.encode(seed, slotIndex, nonce))) % totalTickets) + 1;
+            uint256 candidate = (uint256(keccak256(abi.encode(seed, pickIndex, nonce))) % totalTickets) + 1;
             bool duplicate = false;
-            for (uint256 existingIndex = 0; existingIndex < slotIndex; existingIndex++) {
-                if (s_winnerTicketsBySlot[existingIndex] == candidate) {
+            for (uint256 existingIndex = 0; existingIndex < s_allComputedTickets.length; existingIndex++) {
+                if (s_allComputedTickets[existingIndex] == candidate) {
                     duplicate = true;
                     break;
                 }
@@ -441,5 +498,14 @@ contract RenaissLuckyDraw is VRFConsumerBase {
             nonce++;
         }
         revert InvalidPrizeSlots();
+    }
+
+    function _reserveCountForPrizeSlot(uint256 prizeSlotIndex) internal pure returns (uint256) {
+        return prizeSlotIndex == GRAND_PRIZE_SLOT_INDEX ? GRAND_PRIZE_RESERVE_COUNT : DEFAULT_RESERVE_COUNT;
+    }
+
+    function _requiredUniqueTicketCount(uint256 slots) internal pure returns (uint256) {
+        if (slots == 0) return 0;
+        return slots * (DEFAULT_RESERVE_COUNT + 1) + (GRAND_PRIZE_RESERVE_COUNT - DEFAULT_RESERVE_COUNT);
     }
 }

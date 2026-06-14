@@ -72,6 +72,9 @@ function parseArgs(argv) {
     bscscanApiUrl: process.env.BSCSCAN_API_URL || process.env.ONCHAIN_API_URL || 'https://api.etherscan.io/v2/api',
     bscscanChainId: toNumber(process.env.BSCSCAN_CHAIN_ID || process.env.ONCHAIN_CHAIN_ID || 56),
     bscscanApiKey: process.env.BSCSCAN_API_KEY || '',
+    bscscanRequestTimeoutMs: toNumber(
+      process.env.BSCSCAN_REQUEST_TIMEOUT_MS || process.env.ONCHAIN_REQUEST_TIMEOUT_MS || 30_000,
+    ),
   }
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -100,6 +103,9 @@ function parseArgs(argv) {
     else if (arg === '--bscscan-api-url') args.bscscanApiUrl = argv[++index] || args.bscscanApiUrl
     else if (arg === '--bscscan-chain-id') args.bscscanChainId = toNumber(argv[++index] || args.bscscanChainId)
     else if (arg === '--bscscan-api-key') args.bscscanApiKey = argv[++index] || args.bscscanApiKey
+    else if (arg === '--bscscan-request-timeout-ms') {
+      args.bscscanRequestTimeoutMs = toNumber(argv[++index] || args.bscscanRequestTimeoutMs)
+    }
     else if (arg === '--skip-wallet-resolve') args.skipWalletResolve = true
     else if (arg === '--skip-wallet-migration-url') args.skipWalletMigrationUrl = true
     else if (arg === '--no-cache') args.noCache = true
@@ -117,12 +123,16 @@ function parseArgs(argv) {
     args.bscscanApiUrl = args.bscscanApiUrl || envValues.BSCSCAN_API_URL || envValues.ONCHAIN_API_URL
     args.bscscanChainId = args.bscscanChainId || toNumber(envValues.BSCSCAN_CHAIN_ID || envValues.ONCHAIN_CHAIN_ID || 56)
     args.bscscanApiKey = args.bscscanApiKey || envValues.BSCSCAN_API_KEY || ''
+    args.bscscanRequestTimeoutMs =
+      args.bscscanRequestTimeoutMs ||
+      toNumber(envValues.BSCSCAN_REQUEST_TIMEOUT_MS || envValues.ONCHAIN_REQUEST_TIMEOUT_MS || 30_000)
     args.extraLegacyPacksRaw = args.extraLegacyPacksRaw || envValues[EXTRA_LEGACY_PACKS_ENV] || ''
   }
 
   args.source = args.source || 'onchain'
   args.retries = Math.max(1, args.retries)
   args.resolveConcurrency = Math.max(1, args.resolveConcurrency)
+  args.bscscanRequestTimeoutMs = Math.max(1, args.bscscanRequestTimeoutMs || 30_000)
   args.blockChunk = Math.max(100, args.blockChunk)
   args.pageSize = Math.max(1, Math.min(1000, args.pageSize))
   args.walletMigrationCacheTtlMs = Math.max(0, args.walletMigrationCacheTtlMinutes) * 60 * 1000
@@ -158,6 +168,7 @@ Options:
   --to-block <n>                Debug scan end block.
   --block-chunk <n>             BscScan logs block window size. Default 5000.
   --page-size <n>               BscScan logs page size. Default 1000.
+  --bscscan-request-timeout-ms <ms>  Per-request BscScan timeout. Default 30000.
   --activity-page-size <n>      Open Monitor candidate activity page size.
   --out <path>                  Output JSON path. Default public/lucky-draw-ledger.json.
   --skip-wallet-resolve         Do not call wallet migration resolver.

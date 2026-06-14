@@ -25,6 +25,7 @@
 
 .raffle-shell .brand,
 .raffle-shell .language-switcher,
+.raffle-shell .nav-wallet-disconnect,
 .raffle-shell .nav-inline-links {
   pointer-events: auto;
   border: 1px solid rgba(8, 38, 73, 0.09);
@@ -132,6 +133,36 @@
 .raffle-shell .language-switcher {
   min-height: 42px;
   padding: 6px 10px 6px 13px;
+}
+
+.raffle-shell .nav-wallet-disconnect {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  border-radius: 999px;
+  color: #263f5f;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 860;
+  letter-spacing: 0;
+  white-space: nowrap;
+  transition:
+    color 180ms ease,
+    background 180ms ease,
+    border-color 180ms ease,
+    transform 180ms ease;
+}
+
+.raffle-shell .nav-wallet-disconnect:hover,
+.raffle-shell .nav-wallet-disconnect:focus-visible {
+  color: #071526;
+  border-color: rgba(8, 38, 73, 0.14);
+  background: rgba(255, 255, 255, 0.82);
+  outline: none;
+  transform: translateY(-1px);
 }
 
 .raffle-shell .language-switcher span {
@@ -717,6 +748,15 @@
   .raffle-shell .language-switcher {
     min-height: 40px;
     padding: 5px 9px 5px 11px;
+  }
+
+  .raffle-shell .nav-wallet-disconnect {
+    min-height: 40px;
+    padding: 0 10px;
+  }
+
+  .raffle-shell .nav-wallet-disconnect span {
+    display: none;
   }
 
   .raffle-shell .language-switcher span {

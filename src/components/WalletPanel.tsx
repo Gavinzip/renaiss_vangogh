@@ -40,7 +40,7 @@ export function WalletPanel({
   isAuthorizedOperator: boolean
   isContractOwner: boolean
 }) {
-  const [clockNow, setClockNow] = useState(0)
+  const [clockNow, setClockNow] = useState(() => Date.now())
   const drawState = status
     ? status.fulfilled
       ? copy.walletPanel.fulfilled
@@ -66,8 +66,14 @@ export function WalletPanel({
   const hasVrfFundingIssue = hasInsufficientVrfFunding(vrfSubscription)
   const vrfBalanceLabel = formatVrfPaymentBalance(vrfSubscription)
   const vrfWaitStartedAt = vrfTiming?.requestConfirmedAt ?? vrfTiming?.pendingObservedAt
-  const vrfWaitEndAt = vrfTiming?.randomnessReadyAt ?? (clockNow || Date.now())
+  const vrfWaitEndAt = vrfTiming?.randomnessReadyAt ?? clockNow
   const vrfWaitDuration = vrfWaitStartedAt ? formatDurationMs(vrfWaitEndAt - vrfWaitStartedAt) : '-'
+  const walletPermissionLabel = !status
+    ? copy.common.pending
+    : isAuthorizedOperator
+      ? copy.walletPanel.authorizedAdmin
+      : copy.walletPanel.notAuthorizedAdmin
+  const walletPermissionClassName = !status ? '' : isAuthorizedOperator ? 'is-ok' : 'is-warning'
   function transactionKindLabel(record: DrawTransactionRecord) {
     if (record.kind === 'reset') return copy.walletPanel.resetRound
     if (record.kind === 'finalize') return copy.walletPanel.finalizeLedger
@@ -111,7 +117,7 @@ export function WalletPanel({
         <strong>{network.contractAddress}</strong>
         <small>{network.chainName}</small>
         <small>
-          {copy.walletPanel.authorizedOperator}: {formatAddress(authorizedOperatorAddress)}
+          {copy.walletPanel.contractOperator}: {formatAddress(authorizedOperatorAddress)}
         </small>
       </div>
 
@@ -126,8 +132,10 @@ export function WalletPanel({
           <strong className={isWalletOnSelectedNetwork ? '' : 'is-warning'}>{wallet.chainName}</strong>
           <span>{copy.walletPanel.operator}</span>
           <strong>{formatAddress(wallet.address)}</strong>
-          <span>{copy.walletPanel.authorizedOperator}</span>
-          <strong className={isAuthorizedOperator ? '' : 'is-warning'}>{formatAddress(authorizedOperatorAddress)}</strong>
+          <span>{copy.walletPanel.contractOperator}</span>
+          <strong>{formatAddress(authorizedOperatorAddress)}</strong>
+          <span>{copy.walletPanel.connectedWalletPermission}</span>
+          <strong className={walletPermissionClassName}>{walletPermissionLabel}</strong>
           {status && (
             <>
               <span>{copy.walletPanel.contractOwner}</span>
@@ -139,7 +147,7 @@ export function WalletPanel({
         <p className="wallet-status-preview">{copy.walletPanel.statusPreview}</p>
       )}
 
-      {wallet && !isAuthorizedOperator && (
+      {wallet && status && !isAuthorizedOperator && (
         <p className="message wallet-warning-message">{copy.walletPanel.unauthorizedOperator}</p>
       )}
 

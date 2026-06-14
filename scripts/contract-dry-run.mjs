@@ -82,9 +82,11 @@ const ledger = JSON.parse(readFileSync(new URL(`../${ledgerPath}`, import.meta.u
 const ledgerHash = String(ledger.ledgerHash || '')
 const totalTickets = BigInt(ledger.totalFinalTickets || 0)
 const prizeSlotCount = 21n
+const expectedReserveCount = (slotIndex) => (slotIndex === 0 ? 4 : 3)
+const expectedTotalUniqueTickets = Number(prizeSlotCount) * 4 + 1
 if (!/^0x[a-fA-F0-9]{64}$/.test(ledgerHash)) throw new Error('ledgerHash must be bytes32')
 if (ledger.candidateSourceLimited) throw new Error('cannot dry-run contract with a limited candidate ledger')
-if (totalTickets < prizeSlotCount) throw new Error('ledger total tickets must cover all prize slots')
+if (totalTickets < BigInt(expectedTotalUniqueTickets)) throw new Error('ledger total tickets must cover all prize and reserve slots')
 
 const mockArtifact = compileMock()
 const mockFactory = new ethers.ContractFactory(mockArtifact.abi, mockArtifact.bytecode, owner)
@@ -169,10 +171,12 @@ if (winnerTickets.length !== 0) throw new Error('revealed winner tickets should 
 let winnerTicketsBySlot = await raffle.winnerTicketsBySlot()
 let revealedPrizeSlots = await raffle.revealedPrizeSlots()
 let revealedTickets = await raffle.revealedTickets()
+let reserveTicketsForGrand = await raffle.reserveTicketsBySlot(0)
 if (winnerTicketsBySlot.length !== Number(prizeSlotCount)) throw new Error('winner tickets by slot should expose every prize slot')
 if (winnerTicketsBySlot.some((ticket) => ticket !== 0n)) throw new Error('winner tickets by slot should hide unrevealed slots')
 if (revealedPrizeSlots.length !== 0) throw new Error('revealed prize slots should be empty before reveal calls')
 if (revealedTickets.length !== 0) throw new Error('revealed tickets should be empty before reveal calls')
+if (reserveTicketsForGrand.length !== 0) throw new Error('reserve tickets should hide unrevealed slots')
 
 let zeroBatchBlocked = false
 try {
@@ -216,6 +220,7 @@ if (!emptyPrizeSlotsBlocked) {
 
 const revealedSlotIndexes = []
 const revealedTicketsBySlot = new Map()
+const revealedReserveTicketsBySlot = new Map()
 const publicRevealAccess = {
   drawNext: false,
   drawBatch: false,
@@ -226,7 +231,7 @@ const publicRevealAccess = {
 
 async function collectPrizeWinnerEvents(drawTx, expectedPrizeSlots = null) {
   const drawReceipt = await drawTx.wait()
-  const prizeWinnerEvents = drawReceipt.logs
+  const parsedLogs = drawReceipt.logs
     .map((log) => {
       try {
         return raffle.interface.parseLog(log)
@@ -234,22 +239,23 @@ async function collectPrizeWinnerEvents(drawTx, expectedPrizeSlots = null) {
         return null
       }
     })
+  const prizeWinnerEvents = parsedLogs
     .filter((event) => event?.name === 'PrizeWinnerDrawn')
   if (expectedPrizeSlots && prizeWinnerEvents.length !== expectedPrizeSlots.length) {
     throw new Error(`expected ${expectedPrizeSlots.length} PrizeWinnerDrawn events, got ${prizeWinnerEvents.length}`)
   }
 
-  const legacyWinnerEvents = drawReceipt.logs
-    .map((log) => {
-      try {
-        return raffle.interface.parseLog(log)
-      } catch {
-        return null
-      }
-    })
-    .filter((event) => event?.name === 'WinnerDrawn')
+  const legacyWinnerEvents = parsedLogs.filter((event) => event?.name === 'WinnerDrawn')
   if (legacyWinnerEvents.length !== prizeWinnerEvents.length) {
     throw new Error(`expected legacy WinnerDrawn count ${prizeWinnerEvents.length}, got ${legacyWinnerEvents.length}`)
+  }
+  const reserveWinnerEvents = parsedLogs.filter((event) => event?.name === 'PrizeReserveWinnerDrawn')
+  const expectedReserveEvents = prizeWinnerEvents.reduce(
+    (sum, event) => sum + expectedReserveCount(Number(event.args.prizeSlotIndex)),
+    0,
+  )
+  if (reserveWinnerEvents.length !== expectedReserveEvents) {
+    throw new Error(`expected ${expectedReserveEvents} PrizeReserveWinnerDrawn events, got ${reserveWinnerEvents.length}`)
   }
 
   for (let index = 0; index < prizeWinnerEvents.length; index++) {
@@ -274,6 +280,25 @@ async function collectPrizeWinnerEvents(drawTx, expectedPrizeSlots = null) {
 
     revealedSlotIndexes.push(prizeSlotIndex)
     revealedTicketsBySlot.set(prizeSlotIndex, ticketNumber)
+
+    const reserveEventsForSlot = reserveWinnerEvents.filter(
+      (event) => Number(event.args.prizeSlotIndex) === prizeSlotIndex,
+    )
+    if (reserveEventsForSlot.length !== expectedReserveCount(prizeSlotIndex)) {
+      throw new Error(`expected ${expectedReserveCount(prizeSlotIndex)} reserve events for slot ${prizeSlotIndex}`)
+    }
+    reserveEventsForSlot.forEach((event, reserveIndex) => {
+      if (event.args.revealIndex !== BigInt(expectedRevealIndex)) {
+        throw new Error(`reserve reveal index mismatch at slot ${prizeSlotIndex}`)
+      }
+      if (event.args.reserveIndex !== BigInt(reserveIndex)) {
+        throw new Error(`reserve index mismatch at slot ${prizeSlotIndex}`)
+      }
+    })
+    revealedReserveTicketsBySlot.set(
+      prizeSlotIndex,
+      reserveEventsForSlot.map((event) => event.args.ticketNumber),
+    )
   }
 }
 
@@ -314,6 +339,9 @@ winnerTickets = await raffle.winnerTickets()
 winnerTicketsBySlot = await raffle.winnerTicketsBySlot()
 revealedPrizeSlots = await raffle.revealedPrizeSlots()
 revealedTickets = await raffle.revealedTickets()
+const reserveTicketsBySlot = await Promise.all(
+  Array.from({ length: Number(prizeSlotCount) }, (_, index) => raffle.reserveTicketsBySlot(index)),
+)
 
 if (!status.fulfilled) throw new Error('round was not fulfilled after all drawNext calls')
 if (winnerTickets.length !== Number(prizeSlotCount)) {
@@ -328,15 +356,23 @@ if (revealedPrizeSlots.length !== Number(prizeSlotCount)) {
 if (revealedTickets.length !== Number(prizeSlotCount)) {
   throw new Error(`expected ${prizeSlotCount} revealed tickets, got ${revealedTickets.length}`)
 }
-const unique = new Set(winnerTicketsBySlot.map((ticket) => ticket.toString()))
-if (unique.size !== Number(prizeSlotCount)) throw new Error('winner tickets are not unique')
+const allAwardedTickets = [
+  ...winnerTicketsBySlot,
+  ...reserveTicketsBySlot.flat(),
+]
+const unique = new Set(allAwardedTickets.map((ticket) => ticket.toString()))
+if (unique.size !== expectedTotalUniqueTickets) throw new Error('winner and reserve tickets are not globally unique')
 for (const ticket of winnerTicketsBySlot) {
   if (ticket < 1n || ticket > totalTickets) throw new Error(`winner ticket out of range: ${ticket}`)
+}
+for (const ticket of reserveTicketsBySlot.flat()) {
+  if (ticket < 1n || ticket > totalTickets) throw new Error(`reserve ticket out of range: ${ticket}`)
 }
 for (let revealIndex = 0; revealIndex < Number(prizeSlotCount); revealIndex++) {
   const prizeSlotIndex = Number(revealedPrizeSlots[revealIndex])
   const ticketByReveal = revealedTickets[revealIndex]
   const ticketBySlot = winnerTicketsBySlot[prizeSlotIndex]
+  const reserveTickets = reserveTicketsBySlot[prizeSlotIndex]
   if (winnerTickets[revealIndex] !== ticketByReveal) {
     throw new Error(`winnerTickets legacy output mismatch at reveal ${revealIndex}`)
   }
@@ -345,6 +381,15 @@ for (let revealIndex = 0; revealIndex < Number(prizeSlotCount); revealIndex++) {
   }
   if (revealedTicketsBySlot.get(prizeSlotIndex) !== ticketBySlot) {
     throw new Error(`event/storage ticket mismatch at slot ${prizeSlotIndex}`)
+  }
+  if (reserveTickets.length !== expectedReserveCount(prizeSlotIndex)) {
+    throw new Error(`reserve count mismatch at slot ${prizeSlotIndex}`)
+  }
+  const eventReserveTickets = revealedReserveTicketsBySlot.get(prizeSlotIndex) ?? []
+  for (let reserveIndex = 0; reserveIndex < reserveTickets.length; reserveIndex++) {
+    if (reserveTickets[reserveIndex] !== eventReserveTickets[reserveIndex]) {
+      throw new Error(`reserve event/storage mismatch at slot ${prizeSlotIndex} reserve ${reserveIndex}`)
+    }
   }
 }
 
@@ -360,7 +405,11 @@ console.log(
       totalTickets: status.currentTotalTickets.toString(),
       prizeSlotCount: status.currentPrizeSlotCount.toString(),
       winnerCount: status.winnerCount.toString(),
+      reserveTicketCount: reserveTicketsBySlot.flat().length,
+      totalUniqueAwardedTickets: unique.size,
       firstFiveWinnerTicketsBySlot: winnerTicketsBySlot.slice(0, 5).map((ticket) => ticket.toString()),
+      grandReserveTickets: reserveTicketsBySlot[0].map((ticket) => ticket.toString()),
+      firstSmallPrizeReserveTickets: reserveTicketsBySlot[1].map((ticket) => ticket.toString()),
       firstFiveRevealedTickets: revealedTickets.slice(0, 5).map((ticket) => ticket.toString()),
       revealedPrizeSlots: revealedPrizeSlots.map((slotIndex) => slotIndex.toString()),
       admin: admin.address,

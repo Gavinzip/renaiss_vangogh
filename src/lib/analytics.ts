@@ -18,6 +18,7 @@ export type AnalyticsEventName =
   | 'ticket_search_result'
   | 'wallet_connect'
   | 'wallet_connect_result'
+  | 'wallet_disconnect'
 
 declare global {
   interface Window {

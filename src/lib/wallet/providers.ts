@@ -71,6 +71,15 @@ function sortWalletOptions(options: WalletProviderOption[]) {
   })
 }
 
+function createWalletProviderOption(option: WalletProviderOption): WalletProviderOption {
+  const { provider, ...visibleOption } = option
+  return Object.defineProperty(visibleOption, 'provider', {
+    configurable: true,
+    enumerable: false,
+    value: provider,
+  }) as WalletProviderOption
+}
+
 export function subscribeWalletProviders(listener: WalletProviderListener) {
   if (typeof window === 'undefined') return () => undefined
 
@@ -95,28 +104,28 @@ export function subscribeWalletProviders(listener: WalletProviderListener) {
     }
     const providers = Array.isArray(ethereum.providers) && ethereum.providers.length > 0 ? ethereum.providers : [ethereum]
     providers.forEach((provider, index) => {
-      addOption({
+      addOption(createWalletProviderOption({
         icon: '',
         id: legacyProviderId(provider, index),
         name: legacyProviderName(provider),
         provider,
         rdns: '',
         source: 'legacy',
-      })
+      }))
     })
   }
 
   const handleAnnouncement = (event: Event) => {
     const detail = (event as CustomEvent<Eip6963ProviderDetail>).detail
     if (!detail?.provider || !detail.info?.uuid) return
-    addOption({
+    addOption(createWalletProviderOption({
       icon: detail.info.icon || '',
       id: detail.info.uuid,
       name: detail.info.name || 'Injected wallet',
       provider: detail.provider,
       rdns: detail.info.rdns || '',
       source: 'eip6963',
-    })
+    }))
   }
 
   window.addEventListener('eip6963:announceProvider', handleAnnouncement)

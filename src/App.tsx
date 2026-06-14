@@ -1,5 +1,5 @@
 import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Loader2, ShieldCheck, Trophy } from 'lucide-react'
+import { AlertTriangle, Loader2, LogOut, ShieldCheck, Trophy } from 'lucide-react'
 import './App.css'
 import './styles/raffle-foundation.css'
 import './styles/raffle-tickets.css'
@@ -21,7 +21,6 @@ import { loadWalletIdentities, type WalletIdentityMap } from './lib/ticketing/id
 import type { RaffleEntry, RaffleLedger } from './lib/ticketing/types'
 import {
   DRAW_NETWORKS,
-  isAuthorizedDrawOperator,
   isDrawNetworkKey,
   sameAddress,
   type DrawNetworkKey,
@@ -59,6 +58,7 @@ import { TOTAL_PRIZE_DRAW_SLOTS } from './lib/draw/prizeSlots'
 type PageKey = 'tickets' | 'rules' | 'simulator' | 'draw'
 
 const ContractDetails = lazy(() => import('./components/ContractDetails').then((module) => ({ default: module.ContractDetails })))
+const DrawAdminPanel = lazy(() => import('./components/DrawAdminPanel').then((module) => ({ default: module.DrawAdminPanel })))
 const DrawReveal = lazy(() => import('./components/DrawReveal').then((module) => ({ default: module.DrawReveal })))
 const PrizeRules = lazy(() => import('./components/PrizeRules').then((module) => ({ default: module.PrizeRules })))
 const SimpleDrawSimulator = lazy(() => import('./components/SimpleDrawSimulator').then((module) => ({ default: module.SimpleDrawSimulator })))
@@ -75,6 +75,7 @@ const VRF_STATUS_SLOW_POLL_MS = 3000
 const VRF_STATUS_FAST_POLL_COUNT = 30
 const INITIAL_PRELOAD_ASSETS = [renaissLogo, heroBackgroundImage, holoCardFrontImage]
 const DRAW_TX_STORAGE_KEY = 'renaiss-draw-transactions-v1'
+const DRAW_UNLOCK_SESSION_KEY = 'renaiss-draw-unlocked-v1'
 const EMPTY_LEDGER_HASH = `0x${'0'.repeat(64)}`
 
 const PUBLIC_NAV_ITEMS: PageKey[] = ['tickets', 'rules', 'simulator']
@@ -89,6 +90,28 @@ function readStoredDrawTransactions(): DrawTransactionRecordsByNetwork {
     return parsed && typeof parsed === 'object' ? parsed : {}
   } catch {
     return {}
+  }
+}
+
+function readStoredDrawUnlocked() {
+  if (typeof window === 'undefined') return false
+  try {
+    return window.sessionStorage.getItem(DRAW_UNLOCK_SESSION_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeStoredDrawUnlocked(value: boolean) {
+  if (typeof window === 'undefined') return
+  try {
+    if (value) {
+      window.sessionStorage.setItem(DRAW_UNLOCK_SESSION_KEY, '1')
+    } else {
+      window.sessionStorage.removeItem(DRAW_UNLOCK_SESSION_KEY)
+    }
+  } catch {
+    // The draw page still works for the current render if sessionStorage is unavailable.
   }
 }
 
@@ -167,6 +190,7 @@ function draftDrawStatusFrom(status: DrawStatus): DrawStatus {
     revealedPrizeSlots: [],
     revealedTickets: [],
     winnerTicketsBySlot: Array.from({ length: Number(prizeSlotCount) }, () => 0n),
+    reserveTicketsBySlot: Array.from({ length: Number(prizeSlotCount) }, () => []),
   })
 }
 
@@ -200,7 +224,7 @@ export default function App() {
   const [language, setLanguage] = useState<LanguageCode>('zh-TW')
   const [lastLedgerRefreshAt, setLastLedgerRefreshAt] = useState<number>(0)
   const [nextLedgerRefreshAt, setNextLedgerRefreshAt] = useState<number>(0)
-  const [drawUnlocked, setDrawUnlocked] = useState(false)
+  const [drawUnlocked, setDrawUnlocked] = useState(() => readStoredDrawUnlocked())
   const [walletProviderOptions, setWalletProviderOptions] = useState<WalletProviderOption[]>([])
   const [walletSelectorOpen, setWalletSelectorOpen] = useState(false)
   const [walletSelectorNetworkKey, setWalletSelectorNetworkKey] = useState<DrawNetworkKey>('mainnet')
@@ -225,14 +249,13 @@ export default function App() {
   const activeDrawNetwork = DRAW_NETWORKS[activeDrawNetworkKey]
   const activeStoredDrawStatus = drawStatusByNetwork[activeDrawNetworkKey] ?? null
   const activeWinnerTicketsBySlot = wallet ? (activeStoredDrawStatus?.winnerTicketsBySlot ?? []) : []
+  const activeReserveTicketsBySlot = wallet ? (activeStoredDrawStatus?.reserveTicketsBySlot ?? []) : []
   const activeRevealedPrizeSlots = wallet ? (activeStoredDrawStatus?.revealedPrizeSlots ?? []) : []
   const activeDrawStatus = wallet ? activeStoredDrawStatus : null
   const activeDrawTxRecords = drawTxRecordsByNetwork[activeDrawNetworkKey] ?? []
   const activeDrawVrfTiming = drawVrfTimingByNetwork[activeDrawNetworkKey] ?? null
   const isActiveContractOwner = sameAddress(wallet?.address, activeDrawStatus?.ownerAddress)
-  const isActiveAuthorizedOperator = activeDrawStatus
-    ? activeDrawStatus.connectedWalletIsAdmin
-    : isAuthorizedDrawOperator(wallet?.address, activeDrawNetwork)
+  const isActiveAuthorizedOperator = isWalletDrawAdmin(wallet, activeDrawStatus)
   const activeLedgerForContractCheck = currentFullLedger ?? ledger
   const isActiveContractLedgerMismatch = Boolean(
     activeDrawStatus &&
@@ -246,7 +269,7 @@ export default function App() {
   useEffect(() => subscribeWalletProviders(setWalletProviderOptions), [])
 
   useEffect(() => {
-    const ethereum = wallet?.injectedProvider ?? selectedWalletProvider?.provider ?? window.ethereum
+    const ethereum = wallet?.injectedProvider ?? selectedWalletProvider?.provider
     if (!ethereum?.on) return undefined
 
     let cancelled = false
@@ -531,9 +554,32 @@ export default function App() {
   function handleDrawRunModeChange(nextMode: DrawRunMode) {
     setDrawRunMode(nextMode)
     setDrawMessage('')
+    setDrawBusy((current) => (current === 'read' ? null : current))
     trackEvent('draw_run_mode_change', {
       mode: nextMode,
     })
+  }
+
+  function disconnectWallet() {
+    trackEvent('wallet_disconnect', {
+      address: wallet?.address ?? '',
+      network: activeDrawNetworkKey,
+    })
+    setWallet(null)
+    setSelectedWalletProvider(null)
+    setWalletError('')
+    setWalletSelectorOpen(false)
+    setDrawMessage('')
+    setDrawStatusByNetwork({})
+  }
+
+  function isWalletDrawAdmin(currentWallet: ConnectedWallet | null, status: DrawStatus | null) {
+    if (!currentWallet || !status) return false
+    return Boolean(
+      status.connectedWalletIsAdmin ||
+        sameAddress(currentWallet.address, status.ownerAddress) ||
+        sameAddress(currentWallet.address, status.drawOperatorAddress),
+    )
   }
 
   function drawTransactionKindLabel(kind: DrawTransactionKind) {
@@ -643,7 +689,8 @@ export default function App() {
 
   async function readStatusForWallet(activeWallet: ConnectedWallet, networkKey: DrawNetworkKey): Promise<DrawStatus> {
     const network = DRAW_NETWORKS[networkKey]
-    const nextStatus = await readDrawStatus(activeWallet.provider, network.contractAddress, networkKey, activeWallet.address)
+    const providerForSelectedNetwork = activeWallet.chainId === network.chainId ? activeWallet.provider : undefined
+    const nextStatus = await readDrawStatus(providerForSelectedNetwork, network.contractAddress, networkKey, activeWallet.address)
     setDrawStatusByNetwork((current) => ({ ...current, [networkKey]: nextStatus }))
     updateVrfTimingFromStatus(networkKey, nextStatus)
     return nextStatus
@@ -665,7 +712,7 @@ export default function App() {
 
   useEffect(() => {
     if (activePage !== 'draw') return undefined
-    if (!wallet || !isActiveAuthorizedOperator) return undefined
+    if (!wallet) return undefined
     if (!activeStoredDrawStatus?.requested || activeStoredDrawStatus.fulfilled || activeStoredDrawStatus.state >= 3) return undefined
 
     let cancelled = false
@@ -723,7 +770,6 @@ export default function App() {
     activeStoredDrawStatus?.fulfilled,
     activeStoredDrawStatus?.requested,
     activeStoredDrawStatus?.state,
-    isActiveAuthorizedOperator,
     wallet,
   ])
 
@@ -784,6 +830,7 @@ export default function App() {
       walletConnected = true
       setSelectedWalletProvider(selectedProvider ?? null)
       setWallet(nextWallet)
+      writeStoredDrawUnlocked(true)
       setDrawUnlocked(true)
       setPage('draw')
       setWalletSelectorOpen(false)
@@ -864,14 +911,6 @@ export default function App() {
     }
     const network = DRAW_NETWORKS[networkKey]
     const currentStatus = drawStatusByNetwork[networkKey] ?? (await readStatusForWallet(wallet, networkKey))
-    if (!currentStatus.connectedWalletIsAdmin) {
-      setDrawMessage(copy.walletPanel.ownerOnlyAction)
-      trackEvent('draw_reset', {
-        network: networkKey,
-        status: 'blocked_not_draw_admin',
-      })
-      return false
-    }
     if (currentStatus.state === 2) {
       setDrawMessage(copy.walletPanel.resetBlockedDuringRequest)
       trackEvent('draw_reset', {
@@ -945,14 +984,6 @@ export default function App() {
     }
     const network = DRAW_NETWORKS[networkKey]
     const currentStatus = drawStatusByNetwork[networkKey] ?? (await readStatusForWallet(wallet, networkKey))
-    if (!currentStatus.connectedWalletIsAdmin) {
-      setDrawMessage(copy.walletPanel.ownerOnlyAction)
-      trackEvent('draw_finalize', {
-        network: networkKey,
-        status: 'blocked_not_draw_admin',
-      })
-      return
-    }
     const ledgerForDraw = currentFullLedger ?? ledger
     if (!ledgerForDraw?.ledgerHash) {
       setDrawMessage(copy.walletPanel.ledgerHashMissing)
@@ -1028,14 +1059,6 @@ export default function App() {
     }
     const network = DRAW_NETWORKS[networkKey]
     const currentStatus = drawStatusByNetwork[networkKey] ?? (await readStatusForWallet(wallet, networkKey))
-    if (!currentStatus.connectedWalletIsAdmin) {
-      setDrawMessage(copy.walletPanel.unauthorizedOperator)
-      trackEvent('draw_request', {
-        network: networkKey,
-        status: 'blocked_unauthorized_operator',
-      })
-      return
-    }
     if (!currentStatus?.finalized) {
       setDrawMessage(copy.walletPanel.lockLedgerFirst)
       trackEvent('draw_request', {
@@ -1096,7 +1119,8 @@ export default function App() {
       .map((slotIndexValue, index) => {
         const prizeSlotIndex = Number(slotIndexValue)
         const ticket = status.winnerTicketsBySlot[prizeSlotIndex] ?? status.revealedTickets[previousRevealCount + index] ?? 0n
-        return { prizeSlotIndex, ticket }
+        const reserveTickets = status.reserveTicketsBySlot[prizeSlotIndex] ?? []
+        return { prizeSlotIndex, reserveTickets, ticket }
       })
       .filter((result) => Number.isInteger(result.prizeSlotIndex) && result.prizeSlotIndex >= 0 && result.ticket > 0n)
   }
@@ -1115,16 +1139,6 @@ export default function App() {
 
     const network = DRAW_NETWORKS[networkKey]
     const currentStatus = drawStatusByNetwork[networkKey] ?? (await readStatusForWallet(wallet, networkKey))
-    if (!currentStatus.connectedWalletIsAdmin) {
-      setDrawMessage(copy.walletPanel.unauthorizedOperator)
-      trackEvent('draw_next', {
-        network: networkKey,
-        requested_count: prizeSlotIndexes.length,
-        prize_slot_indexes: prizeSlotIndexes.join(','),
-        status: 'blocked_unauthorized_operator',
-      })
-      return []
-    }
     if (currentStatus?.vrfSubscriptionError) {
       setDrawMessage(currentStatus.vrfSubscriptionError)
       trackEvent('draw_next', {
@@ -1244,6 +1258,7 @@ export default function App() {
     if (drawUnlockHitsRef.current < SECRET_DRAW_UNLOCK_CLICKS) return
 
     drawUnlockHitsRef.current = 0
+    writeStoredDrawUnlocked(true)
     setDrawUnlocked(true)
     setPage('draw')
     trackEvent('hidden_draw_unlock', {
@@ -1305,6 +1320,12 @@ export default function App() {
               ))}
             </nav>
             <div className="nav-visible-actions">
+              {activePage === 'draw' && wallet && (
+                <button className="nav-wallet-disconnect" type="button" onClick={disconnectWallet}>
+                  <LogOut size={14} />
+                  <span>{copy.walletPanel.disconnectWallet}</span>
+                </button>
+              )}
               <label className="language-switcher">
                 <span>{copy.common.language}</span>
                 <select
@@ -1425,16 +1446,17 @@ export default function App() {
                 runMode={drawRunMode}
                 onRunModeChange={handleDrawRunModeChange}
                 winnerTicketsBySlot={activeWinnerTicketsBySlot}
+                reserveTicketsBySlot={activeReserveTicketsBySlot}
                 revealedPrizeSlots={activeRevealedPrizeSlots}
                 totalTickets={currentFullLedger.totalFinalTickets}
                 ledger={currentFullLedger}
                 walletIdentities={walletIdentities}
                 copy={copy}
                 drawStatus={activeDrawStatus}
-                hasWallet={Boolean(wallet && isActiveAuthorizedOperator)}
+                hasWallet={Boolean(wallet)}
                 isContractBusy={drawBusy === 'reset' || drawBusy === 'finalize' || drawBusy === 'draw' || drawBusy === 'drawNext'}
                 isContractLedgerMismatch={isActiveContractLedgerMismatch}
-                canResetRound={Boolean(isActiveAuthorizedOperator && activeDrawStatus && activeDrawStatus.state !== 2 && (activeDrawStatus.finalized || activeDrawStatus.winnerCount > 0n))}
+                canResetRound={Boolean(activeDrawStatus && activeDrawStatus.state !== 2 && (activeDrawStatus.finalized || activeDrawStatus.winnerCount > 0n))}
                 operatorMessage={drawMessage}
                 onConnectWallet={() => openWalletSelector(activeDrawNetworkKey)}
                 onResetRound={() => resetContractRound(activeDrawNetworkKey)}
@@ -1481,6 +1503,16 @@ export default function App() {
                   <p>{copy.draw.securityCopy2}</p>
                 </article>
               </section>
+              {isActiveContractOwner && wallet && activeDrawStatus && (
+                <DrawAdminPanel
+                  network={activeDrawNetwork}
+                  networkKey={activeDrawNetworkKey}
+                  wallet={wallet}
+                  status={activeDrawStatus}
+                  copy={copy}
+                  onRefreshStatus={() => refreshDrawStatus(activeDrawNetworkKey)}
+                />
+              )}
             </section>
           </>
         )}

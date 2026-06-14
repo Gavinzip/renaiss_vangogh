@@ -124,6 +124,67 @@ function decodeTicketEventLog(log, contractConfig) {
   return decodeBuybackEventLog(log, contractConfig)
 }
 
+function shouldSplitLogWindow(error) {
+  const message = String(error?.message || error || '').toLowerCase()
+  return (
+    message.includes('timeout') ||
+    message.includes('temporarily unavailable') ||
+    message.includes('server busy') ||
+    message.includes('http 5')
+  )
+}
+
+async function fetchLogsWindowAdaptive(bscscanConfig, contract, fromBlock, toBlock, offset, args) {
+  const rows = []
+  let calls = 0
+  let splitWindows = 0
+
+  async function fetchRange(rangeStart, rangeEnd) {
+    const rangeRows = []
+    let page = 1
+
+    try {
+      while (true) {
+        calls += 1
+        const pageRows = await fetchLogsWindow(bscscanConfig, {
+          address: contract.contract,
+          fromBlock: rangeStart,
+          toBlock: rangeEnd,
+          topic0: contract.eventTopic,
+          topic1: contract.topic1,
+          topic2: contract.topic2,
+          topic3: contract.topic3,
+          page,
+          offset,
+        })
+        rangeRows.push(...pageRows)
+
+        if (pageRows.length < offset) break
+        page += 1
+      }
+    } catch (error) {
+      if (!shouldSplitLogWindow(error) || rangeStart >= rangeEnd) throw error
+
+      const middleBlock = Math.floor((rangeStart + rangeEnd) / 2)
+      if (middleBlock < rangeStart || middleBlock >= rangeEnd) throw error
+      splitWindows += 1
+      if (args.progress) {
+        console.log(
+          `[onchain] ${contract.label}: split block ${rangeStart}-${rangeEnd} after ${error.message}`,
+        )
+      }
+      await fetchRange(rangeStart, middleBlock)
+      await fetchRange(middleBlock + 1, rangeEnd)
+      return
+    }
+
+    rows.push(...rangeRows)
+  }
+
+  await fetchRange(fromBlock, toBlock)
+  return { rows, calls, splitWindows }
+}
+
 function buybackActivityFromRows(rows, contractConfig) {
   const byCheckoutId = new Map()
   const expectedBuybackContract = normalizeAddress(contractConfig.buybackContract)
@@ -221,6 +282,7 @@ export async function scanOnchainTicketEvents(args) {
     chainId: args.bscscanChainId,
     retries: args.retries,
     backoffMs: args.backoffMs,
+    requestTimeoutMs: args.bscscanRequestTimeoutMs,
   }
   const nowTs = Math.floor(Date.now() / 1000)
   const windowEndTs = Math.min(CAMPAIGN_END, nowTs)
@@ -266,38 +328,30 @@ export async function scanOnchainTicketEvents(args) {
     let cursor = scanStart
     const fetchedEvents = []
     let calls = 0
+    let splitWindows = 0
     while (cursor <= toBlock) {
       const chunkEnd = Math.min(toBlock, cursor + blockChunk - 1)
-      let page = 1
+      const result = await fetchLogsWindowAdaptive(
+        bscscanConfig,
+        contract,
+        cursor,
+        chunkEnd,
+        offset,
+        args,
+      )
+      calls += result.calls
+      splitWindows += result.splitWindows
 
-      while (true) {
-        const rows = await fetchLogsWindow(bscscanConfig, {
-          address: contract.contract,
-          fromBlock: cursor,
-          toBlock: chunkEnd,
-          topic0: contract.eventTopic,
-          topic1: contract.topic1,
-          topic2: contract.topic2,
-          topic3: contract.topic3,
-          page,
-          offset,
-        })
-        calls += 1
-
-        for (const row of rows) {
-          const event = decodeTicketEventLog(row, contract)
-          if (!event) continue
-          if (event.timestamp < CAMPAIGN_START || event.timestamp > CAMPAIGN_END) continue
-          fetchedEvents.push(event)
-        }
-
-        if (rows.length < offset) break
-        page += 1
+      for (const row of result.rows) {
+        const event = decodeTicketEventLog(row, contract)
+        if (!event) continue
+        if (event.timestamp < CAMPAIGN_START || event.timestamp > CAMPAIGN_END) continue
+        fetchedEvents.push(event)
       }
 
       if (args.progress && (calls === 1 || calls % 25 === 0)) {
         console.log(
-          `[onchain] ${contract.label}: block ${cursor}-${chunkEnd}, cached=${cachedEvents.length} fetched=${fetchedEvents.length}`,
+          `[onchain] ${contract.label}: block ${cursor}-${chunkEnd}, cached=${cachedEvents.length} fetched=${fetchedEvents.length} split=${splitWindows}`,
         )
       }
 
@@ -353,6 +407,7 @@ export async function scanOnchainTicketEvents(args) {
       activityFetchedAddresses: legacyMatch?.activityStats.fetchedAddresses,
       activityCachedAddresses: legacyMatch?.activityStats.cachedAddresses,
       cacheToBlock: eventCache.sources[cacheKey]?.toBlock ?? null,
+      splitWindows,
     })
   }
 

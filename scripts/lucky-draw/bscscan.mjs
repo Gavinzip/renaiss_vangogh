@@ -1,6 +1,7 @@
 import { sleep, toNumber } from './utils.mjs'
 
 const DEFAULT_BSCSCAN_API_URL = 'https://api.etherscan.io/v2/api'
+const DEFAULT_BSCSCAN_REQUEST_TIMEOUT_MS = 30_000
 
 function sanitizedParams(params) {
   const out = new URLSearchParams(params)
@@ -15,17 +16,35 @@ export async function bscscanJson(config, params) {
     apikey: config.apiKey,
   })
   const apiUrl = config.apiUrl || DEFAULT_BSCSCAN_API_URL
+  const requestTimeoutMs =
+    toNumber(config.requestTimeoutMs) || DEFAULT_BSCSCAN_REQUEST_TIMEOUT_MS
   let lastError = null
 
   for (let attempt = 1; attempt <= config.retries; attempt += 1) {
+    const controller = new AbortController()
+    let timedOut = false
+    let timeout = null
+
     try {
-      const response = await fetch(`${apiUrl}?${query}`, {
-        headers: { accept: 'application/json' },
-      })
-      if (response.status >= 500 || response.status === 429) {
-        throw new Error(`HTTP ${response.status}`)
-      }
-      const data = await response.json()
+      const data = await Promise.race([
+        (async () => {
+          const response = await fetch(`${apiUrl}?${query}`, {
+            headers: { accept: 'application/json' },
+            signal: controller.signal,
+          })
+          if (response.status >= 500 || response.status === 429) {
+            throw new Error(`HTTP ${response.status}`)
+          }
+          return response.json()
+        })(),
+        new Promise((_, reject) => {
+          timeout = setTimeout(() => {
+            timedOut = true
+            controller.abort()
+            reject(new Error(`BscScan request timed out after ${requestTimeoutMs}ms`))
+          }, requestTimeoutMs)
+        }),
+      ])
       const result = data?.result
       const message = String(data?.message || '').trim()
       const resultText = typeof result === 'string' ? result.toLowerCase() : ''
@@ -50,11 +69,15 @@ export async function bscscanJson(config, params) {
 
       throw new Error(`BscScan error: ${message || result || sanitizedParams(query)}`)
     } catch (error) {
-      lastError = error
+      lastError = timedOut
+        ? new Error(`BscScan request timed out after ${requestTimeoutMs}ms`)
+        : error
       if (attempt < config.retries) {
         await sleep(config.backoffMs * 2 ** (attempt - 1))
         continue
       }
+    } finally {
+      clearTimeout(timeout)
     }
   }
 
@@ -85,7 +108,10 @@ export async function fetchLogsWindow(config, params) {
     offset: String(params.offset),
   }
   for (const key of ['topic1', 'topic2', 'topic3']) {
-    if (params[key]) query[key] = params[key]
+    if (params[key]) {
+      query[key] = params[key]
+      query[`topic0_${key.slice(-1)}_opr`] = 'and'
+    }
   }
 
   const data = await bscscanJson(config, query)

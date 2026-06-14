@@ -7,16 +7,20 @@ export interface DrawNetworkConfig {
   chainId: bigint
   chainName: string
   contractAddress: string
+  deploymentBlock: number
   explorerName: string
   keyHash: string
   key: DrawNetworkKey
   label: string
+  logRpcUrls: string[]
   rpcUrls: string[]
   vrfCoordinatorAddress: string
 }
 
-const DEFAULT_MAINNET_CONTRACT_ADDRESS = '0x12f25d4f664560B59b4C18fb02bF582627CCA3Fe'
-const DEFAULT_TESTNET_CONTRACT_ADDRESS = '0x861A79318237C0CD9896cCdaEEE9CF40458a14E4'
+const DEFAULT_MAINNET_CONTRACT_ADDRESS = '0x0C7c73F527D407aA6AEB8721F7C30C6b2AAF5484'
+const DEFAULT_TESTNET_CONTRACT_ADDRESS = '0x01970483eC82b666F4E1c5824D9aB5DE1797d372'
+const DEFAULT_MAINNET_CONTRACT_DEPLOYMENT_BLOCK = 104218834
+const DEFAULT_TESTNET_CONTRACT_DEPLOYMENT_BLOCK = 113363119
 const DEFAULT_AUTHORIZED_OPERATOR_ADDRESS = '0x88b620388698490764fd85cfa482b5e3a8ad63b5'
 const BSC_MAINNET_BINANCE_VRF_COORDINATOR = '0x9632ADE542f12114f5E5AD4d6F8e47fB993955da'
 const BSC_TESTNET_BINANCE_VRF_COORDINATOR = '0xa2d23627bC0314f4Cbd08Ff54EcB89bb45685053'
@@ -38,8 +42,10 @@ export const DRAW_NETWORKS: Record<DrawNetworkKey, DrawNetworkConfig> = {
     chainId: 97n,
     chainName: 'BNB Smart Chain Testnet',
     contractAddress: DEFAULT_TESTNET_CONTRACT_ADDRESS,
+    deploymentBlock: DEFAULT_TESTNET_CONTRACT_DEPLOYMENT_BLOCK,
     authorizedOperatorAddress: DEFAULT_AUTHORIZED_OPERATOR_ADDRESS,
     explorerName: 'BscScan Testnet',
+    logRpcUrls: ['https://bsc-testnet-rpc.publicnode.com'],
     rpcUrls: ['https://bsc-testnet-dataseed.bnbchain.org'],
     blockExplorerUrls: ['https://testnet.bscscan.com'],
     vrfCoordinatorAddress: BSC_TESTNET_BINANCE_VRF_COORDINATOR,
@@ -51,8 +57,10 @@ export const DRAW_NETWORKS: Record<DrawNetworkKey, DrawNetworkConfig> = {
     chainId: 56n,
     chainName: 'BNB Smart Chain',
     contractAddress: DEFAULT_MAINNET_CONTRACT_ADDRESS,
+    deploymentBlock: DEFAULT_MAINNET_CONTRACT_DEPLOYMENT_BLOCK,
     authorizedOperatorAddress: DEFAULT_AUTHORIZED_OPERATOR_ADDRESS,
     explorerName: 'BscScan',
+    logRpcUrls: ['https://bsc-rpc.publicnode.com'],
     rpcUrls: ['https://bsc-dataseed.binance.org'],
     blockExplorerUrls: ['https://bscscan.com'],
     vrfCoordinatorAddress: BSC_MAINNET_BINANCE_VRF_COORDINATOR,
