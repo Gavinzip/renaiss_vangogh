@@ -2,25 +2,18 @@ import { BrowserProvider, Contract, JsonRpcProvider } from 'ethers'
 import { luckyDrawAbi } from '../contracts/luckyDrawAbi'
 import { DRAW_NETWORKS, type DrawNetworkKey } from '../contracts/luckyDrawNetworks'
 import type { DrawVrfSubscriptionStatus } from './vrfSubscription'
+import type { Eip1193Provider } from './providers'
 
 export const BSC_MAINNET_CHAIN_ID = DRAW_NETWORKS.mainnet.chainId
 export const BSC_TESTNET_CHAIN_ID = DRAW_NETWORKS.testnet.chainId
-
-declare global {
-  interface Window {
-    ethereum?: {
-      request: (args: { method: string; params?: unknown[] }) => Promise<unknown>
-      on?: (event: string, handler: (...args: unknown[]) => void) => void
-      removeListener?: (event: string, handler: (...args: unknown[]) => void) => void
-    }
-  }
-}
 
 export interface ConnectedWallet {
   address: string
   chainId: bigint
   chainName: string
+  injectedProvider?: Eip1193Provider
   provider: BrowserProvider
+  walletName?: string
 }
 
 export interface DrawStatus {
@@ -117,9 +110,25 @@ function parseInjectedChainId(value: unknown): bigint {
   throw new Error('Injected wallet returned an invalid chain id.')
 }
 
-async function readInjectedChainId(): Promise<bigint> {
-  if (!window.ethereum) throw new Error('No injected wallet found.')
-  return parseInjectedChainId(await window.ethereum.request({ method: 'eth_chainId' }))
+type WalletRequestProvider = BrowserProvider | Eip1193Provider | undefined
+
+function isBrowserProvider(provider: WalletRequestProvider): provider is BrowserProvider {
+  return Boolean(
+    provider &&
+      typeof (provider as BrowserProvider).getSigner === 'function' &&
+      typeof (provider as BrowserProvider).send === 'function',
+  )
+}
+
+async function requestWalletProvider(provider: WalletRequestProvider, method: string, params: unknown[] = []): Promise<unknown> {
+  const activeProvider = provider ?? window.ethereum
+  if (!activeProvider) throw new Error('No injected wallet found.')
+  if (isBrowserProvider(activeProvider)) return activeProvider.send(method, params)
+  return activeProvider.request({ method, params })
+}
+
+async function readInjectedChainId(provider?: WalletRequestProvider): Promise<bigint> {
+  return parseInjectedChainId(await requestWalletProvider(provider, 'eth_chainId'))
 }
 
 function createReadOnlyProvider(networkKey: DrawNetworkKey) {
@@ -127,57 +136,64 @@ function createReadOnlyProvider(networkKey: DrawNetworkKey) {
   return new JsonRpcProvider(network.rpcUrls[0], Number(network.chainId), { staticNetwork: true })
 }
 
-async function createWalletProviderForNetwork(networkKey: DrawNetworkKey) {
-  await ensureBscNetwork(undefined, networkKey)
-  if (!window.ethereum) throw new Error('No injected wallet found.')
-  return new BrowserProvider(window.ethereum)
+function createInjectedBrowserProvider(provider?: Eip1193Provider) {
+  const injectedProvider = provider ?? window.ethereum
+  if (!injectedProvider) throw new Error('No injected wallet found.')
+  return new BrowserProvider(injectedProvider)
 }
 
-async function contractWithSigner(contractAddress: string, networkKey: DrawNetworkKey) {
-  const activeProvider = await createWalletProviderForNetwork(networkKey)
+async function createWalletProviderForNetwork(provider: WalletRequestProvider, networkKey: DrawNetworkKey) {
+  await ensureBscNetwork(provider, networkKey)
+  if (isBrowserProvider(provider)) return provider
+  return createInjectedBrowserProvider(provider)
+}
+
+async function contractWithSigner(provider: WalletRequestProvider, contractAddress: string, networkKey: DrawNetworkKey) {
+  const activeProvider = await createWalletProviderForNetwork(provider, networkKey)
   const signer = await activeProvider.getSigner()
   return new Contract(contractAddress, luckyDrawAbi, signer)
 }
 
-export async function readConnectedWallet(): Promise<ConnectedWallet | null> {
-  if (!window.ethereum) return null
-  const accounts = await window.ethereum.request({ method: 'eth_accounts' })
+export async function readConnectedWallet(provider?: Eip1193Provider, walletName?: string): Promise<ConnectedWallet | null> {
+  const injectedProvider = provider ?? window.ethereum
+  if (!injectedProvider) return null
+  const accounts = await requestWalletProvider(injectedProvider, 'eth_accounts')
   if (!Array.isArray(accounts) || typeof accounts[0] !== 'string') return null
-  const chainId = await readInjectedChainId()
+  const chainId = await readInjectedChainId(injectedProvider)
   return {
     address: accounts[0],
     chainId,
     chainName: chainNameForChainId(chainId),
-    provider: new BrowserProvider(window.ethereum),
+    injectedProvider,
+    provider: createInjectedBrowserProvider(injectedProvider),
+    walletName,
   }
 }
 
-export async function connectInjectedWallet(networkKey: DrawNetworkKey): Promise<ConnectedWallet> {
-  if (!window.ethereum) {
+export async function connectInjectedWallet(
+  networkKey: DrawNetworkKey,
+  provider?: Eip1193Provider,
+  walletName?: string,
+): Promise<ConnectedWallet> {
+  const injectedProvider = provider ?? window.ethereum
+  if (!injectedProvider) {
     throw new Error('No injected wallet found. Use MetaMask, Rabby, or another BSC-compatible wallet.')
   }
-  await window.ethereum.request({ method: 'eth_requestAccounts' })
-  await ensureBscNetwork(undefined, networkKey)
-  const wallet = await readConnectedWallet()
+  await requestWalletProvider(injectedProvider, 'eth_requestAccounts')
+  await ensureBscNetwork(injectedProvider, networkKey)
+  const wallet = await readConnectedWallet(injectedProvider, walletName)
   if (!wallet) throw new Error('No wallet account is connected.')
   return wallet
 }
 
-export async function ensureBscNetwork(_provider: BrowserProvider | undefined, networkKey: DrawNetworkKey): Promise<void> {
-  if (!window.ethereum) {
-    throw new Error('No injected wallet found.')
-  }
-
+export async function ensureBscNetwork(provider: WalletRequestProvider, networkKey: DrawNetworkKey): Promise<void> {
   const expectedNetwork = DRAW_NETWORKS[networkKey]
   const hexChainId = `0x${expectedNetwork.chainId.toString(16)}`
-  const currentChainId = await readInjectedChainId()
+  const currentChainId = await readInjectedChainId(provider)
   if (currentChainId === expectedNetwork.chainId) return
 
   try {
-    await window.ethereum.request({
-      method: 'wallet_switchEthereumChain',
-      params: [{ chainId: hexChainId }],
-    })
+    await requestWalletProvider(provider, 'wallet_switchEthereumChain', [{ chainId: hexChainId }])
   } catch (error) {
     const code = typeof error === 'object' && error && 'code' in error ? Number(error.code) : 0
     if (code !== 4902) {
@@ -185,32 +201,26 @@ export async function ensureBscNetwork(_provider: BrowserProvider | undefined, n
         cause: error,
       })
     }
-    await window.ethereum.request({
-      method: 'wallet_addEthereumChain',
-      params: [
-        {
-          chainId: hexChainId,
-          chainName: expectedNetwork.chainName,
-          nativeCurrency: { name: 'BNB', symbol: 'BNB', decimals: 18 },
-          rpcUrls: expectedNetwork.rpcUrls,
-          blockExplorerUrls: expectedNetwork.blockExplorerUrls,
-        },
-      ],
-    })
-    await window.ethereum.request({
-      method: 'wallet_switchEthereumChain',
-      params: [{ chainId: hexChainId }],
-    })
+    await requestWalletProvider(provider, 'wallet_addEthereumChain', [
+      {
+        chainId: hexChainId,
+        chainName: expectedNetwork.chainName,
+        nativeCurrency: { name: 'BNB', symbol: 'BNB', decimals: 18 },
+        rpcUrls: expectedNetwork.rpcUrls,
+        blockExplorerUrls: expectedNetwork.blockExplorerUrls,
+      },
+    ])
+    await requestWalletProvider(provider, 'wallet_switchEthereumChain', [{ chainId: hexChainId }])
   }
 
-  const nextChainId = await readInjectedChainId()
+  const nextChainId = await readInjectedChainId(provider)
   if (nextChainId !== expectedNetwork.chainId) {
     throw new Error(`Please switch wallet network to ${expectedNetwork.chainName}.`)
   }
 }
 
 export async function finalizeContractLedger(
-  _provider: BrowserProvider,
+  provider: WalletRequestProvider,
   contractAddress: string,
   networkKey: DrawNetworkKey,
   ledgerHash: string,
@@ -219,7 +229,7 @@ export async function finalizeContractLedger(
   ledgerUri: string,
   onSubmitted?: ContractTransactionSubmitted,
 ): Promise<string> {
-  const contract = await contractWithSigner(contractAddress, networkKey)
+  const contract = await contractWithSigner(provider, contractAddress, networkKey)
   const tx = await contract.finalizeLedger(ledgerHash, BigInt(totalTickets), BigInt(prizeSlotCount), ledgerUri)
   onSubmitted?.(tx.hash)
   const receipt = await tx.wait()
@@ -227,12 +237,12 @@ export async function finalizeContractLedger(
 }
 
 export async function requestContractDraw(
-  _provider: BrowserProvider,
+  provider: WalletRequestProvider,
   contractAddress: string,
   networkKey: DrawNetworkKey,
   onSubmitted?: ContractTransactionSubmitted,
 ): Promise<string> {
-  const contract = await contractWithSigner(contractAddress, networkKey)
+  const contract = await contractWithSigner(provider, contractAddress, networkKey)
   const tx = await contract.requestDraw()
   onSubmitted?.(tx.hash)
   const receipt = await tx.wait()
@@ -240,12 +250,12 @@ export async function requestContractDraw(
 }
 
 export async function drawNextWinner(
-  _provider: BrowserProvider,
+  provider: WalletRequestProvider,
   contractAddress: string,
   networkKey: DrawNetworkKey,
   onSubmitted?: ContractTransactionSubmitted,
 ): Promise<string> {
-  const contract = await contractWithSigner(contractAddress, networkKey)
+  const contract = await contractWithSigner(provider, contractAddress, networkKey)
   const tx = await contract.drawNext()
   onSubmitted?.(tx.hash)
   const receipt = await tx.wait()
@@ -253,13 +263,13 @@ export async function drawNextWinner(
 }
 
 export async function drawBatchWinners(
-  _provider: BrowserProvider,
+  provider: WalletRequestProvider,
   contractAddress: string,
   networkKey: DrawNetworkKey,
   count: number,
   onSubmitted?: ContractTransactionSubmitted,
 ): Promise<string> {
-  const contract = await contractWithSigner(contractAddress, networkKey)
+  const contract = await contractWithSigner(provider, contractAddress, networkKey)
   const tx = await contract.drawBatch(BigInt(count))
   onSubmitted?.(tx.hash)
   const receipt = await tx.wait()
@@ -267,13 +277,13 @@ export async function drawBatchWinners(
 }
 
 export async function drawPrizeSlotWinner(
-  _provider: BrowserProvider,
+  provider: WalletRequestProvider,
   contractAddress: string,
   networkKey: DrawNetworkKey,
   prizeSlotIndex: number,
   onSubmitted?: ContractTransactionSubmitted,
 ): Promise<string> {
-  const contract = await contractWithSigner(contractAddress, networkKey)
+  const contract = await contractWithSigner(provider, contractAddress, networkKey)
   const tx = await contract.drawPrizeSlot(BigInt(prizeSlotIndex))
   onSubmitted?.(tx.hash)
   const receipt = await tx.wait()
@@ -281,13 +291,13 @@ export async function drawPrizeSlotWinner(
 }
 
 export async function drawPrizeSlotWinners(
-  _provider: BrowserProvider,
+  provider: WalletRequestProvider,
   contractAddress: string,
   networkKey: DrawNetworkKey,
   prizeSlotIndexes: number[],
   onSubmitted?: ContractTransactionSubmitted,
 ): Promise<string> {
-  const contract = await contractWithSigner(contractAddress, networkKey)
+  const contract = await contractWithSigner(provider, contractAddress, networkKey)
   const tx = await contract.drawPrizeSlots(prizeSlotIndexes.map((slotIndex) => BigInt(slotIndex)))
   onSubmitted?.(tx.hash)
   const receipt = await tx.wait()
@@ -295,12 +305,12 @@ export async function drawPrizeSlotWinners(
 }
 
 export async function drawRandomPrizeSlotWinner(
-  _provider: BrowserProvider,
+  provider: WalletRequestProvider,
   contractAddress: string,
   networkKey: DrawNetworkKey,
   onSubmitted?: ContractTransactionSubmitted,
 ): Promise<string> {
-  const contract = await contractWithSigner(contractAddress, networkKey)
+  const contract = await contractWithSigner(provider, contractAddress, networkKey)
   const tx = await contract.drawRandomPrizeSlot()
   onSubmitted?.(tx.hash)
   const receipt = await tx.wait()
@@ -308,12 +318,12 @@ export async function drawRandomPrizeSlotWinner(
 }
 
 export async function resetContractDraft(
-  _provider: BrowserProvider,
+  provider: WalletRequestProvider,
   contractAddress: string,
   networkKey: DrawNetworkKey,
   onSubmitted?: ContractTransactionSubmitted,
 ): Promise<string> {
-  const contract = await contractWithSigner(contractAddress, networkKey)
+  const contract = await contractWithSigner(provider, contractAddress, networkKey)
   const tx = await contract.resetDraft()
   onSubmitted?.(tx.hash)
   const receipt = await tx.wait()
