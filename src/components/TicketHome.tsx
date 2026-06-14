@@ -106,6 +106,10 @@ function formatRefreshTime(value: number, language: LanguageCode) {
   }).format(new Date(value))
 }
 
+function formatLedgerTime(value: number | null | undefined, language: LanguageCode) {
+  return formatRefreshTime(Number(value || 0) * 1000, language)
+}
+
 function ledgerLocked(ledger: RaffleLedger): boolean {
   return Boolean(ledger.bonusShuffleLocked)
 }
@@ -332,6 +336,7 @@ export function TicketHome({
   const suggestionRequestRef = useRef(0)
   const suggestionsId = useId()
   const normalizedQuery = query.trim()
+  const isLedgerLocked = ledgerLocked(ledger)
   const isSubmittedQuery = submittedQuery.length > 0 && submittedQuery === normalizedQuery
   const isScanningLedger = isSubmittedQuery && searchPhase === 'scanning'
   const hasSettledSearch = isSubmittedQuery && searchPhase === 'settled'
@@ -887,12 +892,18 @@ export function TicketHome({
             <strong>B-{String(ledger.totalBonusTickets || 0).padStart(6, '0')}</strong>
           </div>
           <div>
-            <span>{copy.ticketHome.lastScan}</span>
-            <strong>{formatRefreshTime(lastLedgerRefreshAt, language)}</strong>
+            <span>{isLedgerLocked ? copy.ticketHome.ledgerLocked : copy.ticketHome.lastScan}</span>
+            <strong>
+              {isLedgerLocked
+                ? formatLedgerTime(ledger.bonusShuffleLockedAt || ledger.campaignEnd, language)
+                : formatRefreshTime(lastLedgerRefreshAt, language)}
+            </strong>
           </div>
           <div>
-            <span>{copy.ticketHome.nextScan}</span>
-            <strong>{formatRefreshTime(nextLedgerRefreshAt, language)}</strong>
+            <span>{isLedgerLocked ? copy.ticketHome.finalUpdate : copy.ticketHome.nextScan}</span>
+            <strong>
+              {isLedgerLocked ? formatLedgerTime(ledger.generatedAt, language) : formatRefreshTime(nextLedgerRefreshAt, language)}
+            </strong>
           </div>
         </section>
       </section>
