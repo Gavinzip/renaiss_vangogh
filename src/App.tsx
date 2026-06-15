@@ -90,7 +90,7 @@ const INITIAL_PRELOAD_ASSETS = [renaissLogo, heroBackgroundImage, holoCardFrontI
 const DRAW_TX_STORAGE_KEY = 'renaiss-draw-transactions-v1'
 const DRAW_UNLOCK_SESSION_KEY = 'renaiss-draw-unlocked-v1'
 const EMPTY_LEDGER_HASH = `0x${'0'.repeat(64)}`
-const DRAW_MAINNET_ONLY_START_MS = Date.parse('2026-06-15T21:00:00+08:00')
+const DRAW_MAINNET_ONLY_START_MS = Date.parse('2026-06-15T21:30:00+08:00')
 
 const PUBLIC_NAV_ITEMS: PageKey[] = ['tickets', 'rules', 'simulator']
 type DrawBusyState = 'connect' | 'read' | 'reset' | 'finalize' | 'draw' | 'drawNext' | null
@@ -706,7 +706,7 @@ export default function App() {
       setDrawBusy((current) => (current === 'read' ? null : current))
       trackEvent('draw_run_mode_change', {
         mode: 'mainnet',
-        locked_after: '2026-06-15T21:00:00+08:00',
+        locked_after: '2026-06-15T21:30:00+08:00',
       })
       return
     }
