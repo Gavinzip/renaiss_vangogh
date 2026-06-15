@@ -2253,6 +2253,35 @@
   font-weight: 720;
 }
 
+.page-draw .draw-winner-socials {
+  display: flex;
+  gap: 0.28rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.page-draw .draw-winner-socials span {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0.14rem 0.34rem;
+  border: 1px solid rgba(255, 230, 150, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(235, 242, 250, 0.78);
+  font-size: 0.62rem;
+  font-weight: 820;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-draw .draw-winner-socials span.is-empty {
+  border-color: rgba(205, 221, 238, 0.09);
+  color: rgba(205, 221, 238, 0.46);
+  background: rgba(255, 255, 255, 0.035);
+}
+
 .page-draw .draw-winner-reserve-list {
   display: grid;
   gap: 0.42rem;
@@ -2584,6 +2613,33 @@
   font-size: 0.76rem;
   font-style: normal;
   font-weight: 760;
+}
+
+.page-draw .draw-winner-stack-card .draw-winner-socials {
+  display: flex;
+  gap: 0.32rem;
+  flex-wrap: wrap;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.page-draw .draw-winner-stack-card .draw-winner-socials span {
+  width: auto;
+  padding: 0.18rem 0.42rem;
+  border: 1px solid rgba(78, 50, 9, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 250, 229, 0.54);
+  color: rgba(34, 24, 8, 0.68);
+  font-size: 0.68rem;
+  box-shadow: none;
+}
+
+.page-draw .draw-winner-stack-card .draw-winner-socials span.is-empty {
+  border-color: rgba(78, 50, 9, 0.06);
+  color: rgba(34, 24, 8, 0.42);
+  background: rgba(255, 250, 229, 0.32);
 }
 
 @keyframes draw-detail-layer-in {

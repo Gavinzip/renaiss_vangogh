@@ -15,7 +15,7 @@ import {
 import { isDrawNetworkKey, type DrawRunMode } from '../lib/contracts/luckyDrawNetworks'
 import type { AppCopy } from '../lib/i18n'
 import { compactNumber, formatDrawTicketNumber } from '../lib/ticketing/display'
-import type { WalletIdentityMap } from '../lib/ticketing/identities'
+import type { WalletIdentity, WalletIdentityMap } from '../lib/ticketing/identities'
 import type { RaffleLedger } from '../lib/ticketing/types'
 import { buildWinnerCandidateSnapshot, findWinnerCandidate, type WinnerCandidate } from '../lib/ticketing/winnerCandidates'
 import type { ContractRevealResult, DrawStatus } from '../lib/wallet/bsc'
@@ -66,6 +66,7 @@ interface DrawWinnerResult {
 
 interface WinnerStackCard {
   address: string
+  identity: WalletIdentity | null
   kind: 'primary' | 'reserve'
   label: string
   name: string
@@ -87,6 +88,31 @@ function waitForNextPaint() {
 function isMediaPlaybackBlocked(error: unknown) {
   if (!(error instanceof Error)) return false
   return error.name === 'NotAllowedError' || /notallowed|permission|user gesture|user activation/i.test(error.message)
+}
+
+function cleanTwitterHandle(value: string | null | undefined) {
+  return String(value || '').trim().replace(/^@+/, '')
+}
+
+function identitySocials(identity: WalletIdentity | null | undefined) {
+  const twitter = cleanTwitterHandle(identity?.linkedTwitter)
+  const discord = String(identity?.linkedDiscord || '').trim()
+  return {
+    twitter,
+    discord,
+  }
+}
+
+function IdentitySocialLinks({ copy, identity }: { copy: AppCopy; identity: WalletIdentity | null | undefined }) {
+  const socials = identitySocials(identity)
+  const notConnected = copy.drawReveal.notConnected
+
+  return (
+    <span className="draw-winner-socials">
+      <span className={!socials.twitter ? 'is-empty' : undefined}>{socials.twitter ? `X @${socials.twitter}` : `X ${notConnected}`}</span>
+      <span className={!socials.discord ? 'is-empty' : undefined}>{socials.discord ? `Discord ${socials.discord}` : `Discord ${notConnected}`}</span>
+    </span>
+  )
 }
 
 function buildWinnerResult({
@@ -400,6 +426,10 @@ export function DrawReveal({
     return result.owner?.address ?? copy.drawReveal.noWalletName
   }
 
+  function ownerIdentity(result: DrawWinnerResult) {
+    return result.owner?.identity ?? null
+  }
+
   function reserveOwnerName(result: DrawReserveResult) {
     return result.owner?.displayName ?? copy.drawReveal.unknownWinner
   }
@@ -408,10 +438,15 @@ export function DrawReveal({
     return result.owner?.address ?? copy.drawReveal.noWalletName
   }
 
+  function reserveOwnerIdentity(result: DrawReserveResult) {
+    return result.owner?.identity ?? null
+  }
+
   function winnerStackCards(result: DrawWinnerResult): WinnerStackCard[] {
     return [
       {
         address: ownerAddress(result),
+        identity: ownerIdentity(result),
         kind: 'primary',
         label: copy.drawReveal.primaryWinner,
         name: ownerName(result),
@@ -421,6 +456,7 @@ export function DrawReveal({
       },
       ...result.reserves.map((reserve) => ({
         address: reserveOwnerAddress(reserve),
+        identity: reserveOwnerIdentity(reserve),
         kind: 'reserve' as const,
         label: `${copy.drawReveal.reserveWinner} #${reserve.reserveRank}`,
         name: reserveOwnerName(reserve),
@@ -1553,6 +1589,7 @@ export function DrawReveal({
                   <small>{selectedWinnerCard.prize}</small>
                   <div>
                     <b>{selectedWinnerCard.name}</b>
+                    <IdentitySocialLinks copy={copy} identity={selectedWinnerCard.identity} />
                     <em title={selectedWinnerCard.address}>{selectedWinnerCard.address}</em>
                   </div>
                 </article>
@@ -1617,6 +1654,7 @@ export function DrawReveal({
                         <small>{prizeRewards[result.prizeGroupId]}</small>
                         <div className="draw-winner-identity">
                           <b>{ownerName(result)}</b>
+                          <IdentitySocialLinks copy={copy} identity={ownerIdentity(result)} />
                           <em title={ownerAddress(result)}>{ownerAddress(result)}</em>
                         </div>
                       </button>

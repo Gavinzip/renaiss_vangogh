@@ -1,5 +1,5 @@
 import type { RaffleEntry, RaffleLedger, TicketInterval } from './types'
-import type { WalletIdentityMap } from './identities'
+import type { WalletIdentity, WalletIdentityMap } from './identities'
 import { shortenAddress } from './identities'
 import { formatDrawTicketNumber } from './display'
 
@@ -9,6 +9,7 @@ const MAX_VISIBLE_CANDIDATES = 12
 export interface WinnerCandidate {
   address: string
   displayName: string
+  identity: WalletIdentity | null
   matchingTickets: number
   sampleTickets: number[]
   entry: RaffleEntry
@@ -29,13 +30,17 @@ function overlap(interval: TicketInterval, start: number, end: number) {
   return from <= to ? { from, to, count: to - from + 1 } : null
 }
 
-function identityName(entry: RaffleEntry, identities: WalletIdentityMap): string {
+function identityDisplayValue(identity: WalletIdentity | null): string {
+  return identity?.username || identity?.linkedTwitter || identity?.linkedDiscord || ''
+}
+
+function identityForEntry(entry: RaffleEntry, identities: WalletIdentityMap): WalletIdentity | null {
   const addresses = [entry.userAddress, ...entry.sourceAddresses]
   for (const address of addresses) {
-    const username = identities[address.toLowerCase()]?.username
-    if (username) return username
+    const identity = identities[address.toLowerCase()] ?? null
+    if (identityDisplayValue(identity)) return identity
   }
-  return shortenAddress(entry.userAddress)
+  return null
 }
 
 function candidateRange(winnerTicket: bigint, revealedDigitCount: number, totalTickets: number) {
@@ -93,9 +98,11 @@ export function buildWinnerCandidateSnapshot({
     }
 
     if (matchingTickets > 0) {
+      const identity = identityForEntry(entry, identities)
       candidates.push({
         address: entry.userAddress,
-        displayName: identityName(entry, identities),
+        displayName: identityDisplayValue(identity) || shortenAddress(entry.userAddress),
+        identity,
         matchingTickets,
         sampleTickets,
         entry,

@@ -327,6 +327,7 @@ const EN_COPY = {
     closeWinnerStack: 'Close winner details',
     unknownWinner: 'Unknown winner',
     noWalletName: 'No wallet identity',
+    notConnected: 'Not connected',
   },
   contract: {
     smartContract: 'Smart contract',
@@ -764,6 +765,7 @@ export const COPY: Record<LanguageCode, AppCopy> = {
       closeWinnerStack: '關閉得獎詳情',
       unknownWinner: '未知得主',
       noWalletName: '沒有錢包名稱',
+      notConnected: '沒有連接',
     },
     contract: {
       ...EN_COPY.contract,
@@ -1114,6 +1116,7 @@ export const COPY: Record<LanguageCode, AppCopy> = {
       closeWinnerStack: '关闭得奖详情',
       unknownWinner: '未知得主',
       noWalletName: '没有钱包名称',
+      notConnected: '没有连接',
     },
     walletPanel: {
       ...EN_COPY.walletPanel,
