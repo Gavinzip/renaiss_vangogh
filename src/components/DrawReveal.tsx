@@ -135,6 +135,7 @@ export function DrawReveal({
   walletIdentities,
   copy,
   drawStatus,
+  isMainnetOnlyMode,
   hasWallet,
   isContractBusy,
   isContractLedgerMismatch,
@@ -157,6 +158,7 @@ export function DrawReveal({
   walletIdentities: WalletIdentityMap
   copy: AppCopy
   drawStatus: DrawStatus | null
+  isMainnetOnlyMode: boolean
   hasWallet: boolean
   isContractBusy: boolean
   isContractLedgerMismatch: boolean
@@ -331,7 +333,6 @@ export function DrawReveal({
     isSequenceRunning ||
     isContractBusy ||
     isWaitingForContractRandomness ||
-    (primaryRunWouldRevealTicket && isIntroVideoBlocked) ||
     Boolean(vrfConfigWarning) ||
     Boolean(isLiveRunMode && hasVrfFundingIssue && drawStatus?.finalized && !drawStatus.requested) ||
     (isLiveRunMode && isAllComplete) ||
@@ -551,7 +552,7 @@ export function DrawReveal({
   function guardIntroVideoReady() {
     if (!isIntroVideoBlocked) return true
     setSequenceMessage(introVideoMessage)
-    return false
+    return true
   }
 
   const clearActiveRevealDisplay = useCallback((nextPhase: 'idle' | 'video' | 'reveal' = 'idle') => {
@@ -623,9 +624,11 @@ export function DrawReveal({
   async function revealResults(results: DrawWinnerResult[], playIntro = true) {
     if (results.length === 0) return false
 
-    if (playIntro) {
+    if (playIntro && !isIntroVideoBlocked) {
       const didPlayVideo = await playVideoClip()
       if (!didPlayVideo) return false
+    } else if (playIntro && isIntroVideoBlocked) {
+      setSequenceMessage(introVideoMessage)
     }
 
     if (results.length > 1) {
@@ -1206,13 +1209,21 @@ export function DrawReveal({
           <h2>{copy.drawReveal.title}</h2>
         </div>
         <div className="draw-reveal-mode-shell">
-          <div className="draw-reveal-mode-switch" role="tablist" aria-label={copy.drawReveal.runMode}>
-            <button className={runMode === 'showcase' ? 'is-active' : ''} type="button" role="tab" aria-selected={runMode === 'showcase'} onClick={() => selectRunMode('showcase')}>
-              {copy.drawReveal.showcaseMode}
-            </button>
-            <button className={runMode === 'testnet' ? 'is-active' : ''} type="button" role="tab" aria-selected={runMode === 'testnet'} onClick={() => selectRunMode('testnet')}>
-              {copy.drawReveal.testnetMode}
-            </button>
+          <div
+            className={`draw-reveal-mode-switch ${isMainnetOnlyMode ? 'is-mainnet-only' : ''}`}
+            role="tablist"
+            aria-label={copy.drawReveal.runMode}
+          >
+            {!isMainnetOnlyMode && (
+              <button className={runMode === 'showcase' ? 'is-active' : ''} type="button" role="tab" aria-selected={runMode === 'showcase'} onClick={() => selectRunMode('showcase')}>
+                {copy.drawReveal.showcaseMode}
+              </button>
+            )}
+            {!isMainnetOnlyMode && (
+              <button className={runMode === 'testnet' ? 'is-active' : ''} type="button" role="tab" aria-selected={runMode === 'testnet'} onClick={() => selectRunMode('testnet')}>
+                {copy.drawReveal.testnetMode}
+              </button>
+            )}
             <button className={runMode === 'mainnet' ? 'is-active' : ''} type="button" role="tab" aria-selected={runMode === 'mainnet'} onClick={() => selectRunMode('mainnet')}>
               {copy.drawReveal.mainnetMode}
             </button>

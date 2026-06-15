@@ -4,7 +4,7 @@ import type { DrawNetworkConfig } from '../lib/contracts/luckyDrawNetworks'
 import type { AppCopy } from '../lib/i18n'
 import { compactNumber, formatDrawTicketNumber } from '../lib/ticketing/display'
 import { formatAddress } from '../lib/ticketing/rules'
-import { formatDurationMs, transactionDuration, type DrawTransactionRecord, type DrawVrfTiming } from '../lib/wallet/drawTransactions'
+import { formatDurationMs, type DrawVrfTiming } from '../lib/wallet/drawTransactions'
 import { formatVrfPaymentBalance, hasInsufficientVrfFunding } from '../lib/wallet/vrfSubscription'
 import {
   type ConnectedWallet,
@@ -20,7 +20,6 @@ export function WalletPanel({
   ledgerTotalTickets,
   ledgerHash,
   prizeSlotCount,
-  transactionRecords,
   vrfTiming,
   authorizedOperatorAddress,
   isAuthorizedOperator,
@@ -34,7 +33,6 @@ export function WalletPanel({
   ledgerTotalTickets: number
   ledgerHash: string | null
   prizeSlotCount: number
-  transactionRecords: DrawTransactionRecord[]
   vrfTiming: DrawVrfTiming | null
   authorizedOperatorAddress: string
   isAuthorizedOperator: boolean
@@ -74,29 +72,15 @@ export function WalletPanel({
       ? copy.walletPanel.authorizedAdmin
       : copy.walletPanel.notAuthorizedAdmin
   const walletPermissionClassName = !status ? '' : isAuthorizedOperator ? 'is-ok' : 'is-warning'
-  function transactionKindLabel(record: DrawTransactionRecord) {
-    if (record.kind === 'reset') return copy.walletPanel.resetRound
-    if (record.kind === 'finalize') return copy.walletPanel.finalizeLedger
-    if (record.kind === 'request') return copy.drawReveal.requestRound
-    return copy.walletPanel.drawNext
-  }
-
-  function transactionStatusLabel(record: DrawTransactionRecord) {
-    if (record.status === 'awaiting-signature') return copy.walletPanel.txAwaitingSignature
-    if (record.status === 'pending') return copy.walletPanel.txPending
-    if (record.status === 'confirmed') return copy.walletPanel.txConfirmed
-    return copy.walletPanel.txFailed
-  }
 
   useEffect(() => {
-    const hasActiveTransaction = transactionRecords.some((record) => record.status === 'awaiting-signature' || record.status === 'pending')
     const hasActiveVrfTimer = Boolean(vrfWaitStartedAt && !vrfTiming?.randomnessReadyAt && status?.requested && status.state < 3)
-    if (!hasActiveTransaction && !hasActiveVrfTimer) return undefined
+    if (!hasActiveVrfTimer) return undefined
     const intervalId = window.setInterval(() => setClockNow(Date.now()), 1000)
     return () => {
       window.clearInterval(intervalId)
     }
-  }, [status?.requested, status?.state, transactionRecords, vrfTiming?.randomnessReadyAt, vrfWaitStartedAt])
+  }, [status?.requested, status?.state, vrfTiming?.randomnessReadyAt, vrfWaitStartedAt])
 
   return (
     <section className="panel wallet-panel">
@@ -257,27 +241,6 @@ export function WalletPanel({
           </a>
         </div>
       </div>
-
-      {transactionRecords.length > 0 && (
-        <div className="wallet-transaction-log">
-          <span>{copy.walletPanel.transactionTimeline}</span>
-          {transactionRecords.map((record) => (
-            <a
-              className={`wallet-transaction-row is-${record.status}`}
-              href={record.hash ? `${explorerBaseUrl}/tx/${record.hash}` : undefined}
-              target="_blank"
-              rel="noreferrer"
-              key={record.id}
-            >
-              <strong>{transactionKindLabel(record)}</strong>
-              <span>{record.hash ? `${record.hash.slice(0, 10)}...` : copy.walletPanel.txAwaitingSignature}</span>
-              <small>
-                {transactionStatusLabel(record)} · {transactionDuration(record, clockNow || record.confirmedAt || record.submittedAt || record.startedAt)}
-              </small>
-            </a>
-          ))}
-        </div>
-      )}
 
       {message && <p className="message">{message}</p>}
     </section>

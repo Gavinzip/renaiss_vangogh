@@ -1,5 +1,5 @@
-import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { AtSign, Copy, Download, Gem, Hash, Search, ShieldCheck, Sparkles, Ticket, Trophy, UserRound, Wallet } from 'lucide-react'
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react'
+import { ArrowLeft, AtSign, Copy, Download, Gem, Hash, Search, ShieldCheck, Sparkles, Ticket, Trophy, UserRound, Wallet } from 'lucide-react'
 import sbtBrownImage from '../assets/sbt-brown.webp'
 import sbtGoldImage from '../assets/sbt-gold.webp'
 import sbtRainbowImage from '../assets/sbt-rainbow.webp'
@@ -7,10 +7,11 @@ import sbtSilverImage from '../assets/sbt-silver.webp'
 import sbtLevelsImage from '../assets/van-gogh-sbt-levels-source.webp'
 import type { AppCopy, LanguageCode } from '../lib/i18n'
 import { packLabel } from '../lib/i18n'
-import { anyPrizeProbability, compactNumber, intervalLabel, percent, probability } from '../lib/ticketing/display'
+import { anyPrizeProbability, compactNumber, formatDrawTicketNumber, intervalLabel, percent, probability } from '../lib/ticketing/display'
 import type { IdentitySuggestion, IdentitySuggestionKind, WalletIdentityMap } from '../lib/ticketing/identities'
 import { formatAddress, formatTicketRange, packDisplayRows } from '../lib/ticketing/rules'
 import type { RaffleEntry, RaffleLeaderboardEntry, RaffleLedger, SbtTier, TicketInterval } from '../lib/ticketing/types'
+import { PRIZE_GROUPS, prizeGroupForSlot, prizeOrdinalInGroup } from '../lib/draw/prizeSlots'
 import { HoloPrizeCard } from './HoloPrizeCard'
 import { RollingReveal } from './RollingReveal'
 
@@ -50,6 +51,23 @@ type CopyTicketRangesDetails = {
 type LoadEntryIntervalsRequest = {
   offset: number
   limit: number | 'all'
+}
+
+type TicketLookupPrizeMatch = {
+  kind: 'primary' | 'reserve'
+  prizeOrdinal: number
+  prizeReward: string
+  prizeTitle: string
+  reserveRank?: number
+  slotIndex: number
+}
+
+type TicketLookupResult = {
+  interval: TicketInterval | null
+  ownerAddress: string
+  ownerName: string
+  prizeMatch: TicketLookupPrizeMatch | null
+  ticketLabel: string
 }
 
 const SUGGESTION_ICONS: Record<IdentitySuggestionKind, typeof Wallet> = {
@@ -191,6 +209,38 @@ function leaderboardIdentity(entry: RaffleLeaderboardEntry, walletIdentities: Wa
   }
 }
 
+function entryDisplayIdentity(entry: RaffleEntry, walletIdentities: WalletIdentityMap) {
+  const addresses = [entry.userAddress, ...(entry.sourceAddresses ?? [])]
+  for (const address of addresses) {
+    const identity = walletIdentities[address.toLowerCase()]
+    const displayName = identity?.username?.trim() || identity?.linkedTwitter?.trim() || identity?.linkedDiscord?.trim()
+    if (displayName) {
+      return {
+        displayName,
+        identityAddress: address,
+      }
+    }
+  }
+
+  return {
+    displayName: formatAddress(entry.userAddress),
+    identityAddress: entry.userAddress,
+  }
+}
+
+function normalizeTicketNumberInput(value: string) {
+  return value.replace(/\D/g, '').slice(0, 6)
+}
+
+function findTicketInIntervals(intervals: readonly TicketInterval[], ticketNumber: number) {
+  for (const interval of intervals) {
+    if (ticketNumber >= interval.start && ticketNumber <= interval.end) {
+      return interval
+    }
+  }
+  return null
+}
+
 function TopTenLeaderboard({
   ledger,
   walletIdentities,
@@ -287,6 +337,9 @@ export function TicketHome({
   setQuery,
   connectedAddress,
   walletIdentities,
+  winnerTicketsBySlot,
+  reserveTicketsBySlot,
+  revealedPrizeSlots,
   copy,
   language,
   lastLedgerRefreshAt,
@@ -305,6 +358,9 @@ export function TicketHome({
   setQuery: (value: string) => void
   connectedAddress?: string
   walletIdentities: WalletIdentityMap
+  winnerTicketsBySlot?: readonly bigint[]
+  reserveTicketsBySlot?: readonly (readonly bigint[])[]
+  revealedPrizeSlots?: readonly bigint[]
   copy: AppCopy
   language: LanguageCode
   lastLedgerRefreshAt: number
@@ -329,6 +385,10 @@ export function TicketHome({
   const [intervalEntry, setIntervalEntry] = useState<RaffleEntry | null>(null)
   const [intervalLoadState, setIntervalLoadState] = useState<IntervalLoadState>('idle')
   const [intervalLoadError, setIntervalLoadError] = useState('')
+  const [ticketLookupMode, setTicketLookupMode] = useState(false)
+  const [ticketLookupInput, setTicketLookupInput] = useState('')
+  const [ticketLookupError, setTicketLookupError] = useState('')
+  const [ticketLookupResult, setTicketLookupResult] = useState<TicketLookupResult | null>(null)
   const scanTimerRef = useRef<number | null>(null)
   const intervalRequestRef = useRef(0)
   const reportedSearchResultRef = useRef('')
@@ -382,6 +442,15 @@ export function TicketHome({
   const ticketCountTitle = ticketCountLabel(ledger, copy)
   const totalTicketCountTitle = totalTicketCountLabel(ledger, copy)
   const bonusNumbersNotice = bonusTicketNotice(ledger, copy)
+  const revealedPrizeSlotSet = useMemo(
+    () =>
+      new Set(
+        (revealedPrizeSlots ?? [])
+          .map((slotIndex) => Number(slotIndex))
+          .filter((slotIndex) => Number.isInteger(slotIndex) && slotIndex >= 0),
+      ),
+    [revealedPrizeSlots],
+  )
 
   useEffect(() => {
     return () => {
@@ -709,6 +778,117 @@ export function TicketHome({
     }
   }
 
+  function prizeCopyForSlot(slotIndex: number) {
+    const prizeGroup = prizeGroupForSlot(slotIndex)
+    const prizeIndex = PRIZE_GROUPS.findIndex((group) => group.id === prizeGroup.id)
+    return {
+      ordinal: prizeOrdinalInGroup(slotIndex),
+      reward: copy.rules.prizes[prizeIndex]?.reward ?? prizeGroup.reward,
+      title: copy.rules.prizes[prizeIndex]?.title ?? prizeGroup.label,
+    }
+  }
+
+  function findTicketPrizeMatch(ticketNumber: number): TicketLookupPrizeMatch | null {
+    const ticketValue = BigInt(ticketNumber)
+    const primaryTickets = winnerTicketsBySlot ?? []
+    const reserveTickets = reserveTicketsBySlot ?? []
+    const slotCount = Math.max(primaryTickets.length, reserveTickets.length)
+
+    for (let slotIndex = 0; slotIndex < slotCount; slotIndex += 1) {
+      const primaryTicket = primaryTickets[slotIndex] ?? 0n
+      const slotWasRevealed = revealedPrizeSlotSet.has(slotIndex) || primaryTicket > 0n
+      if (!slotWasRevealed) continue
+
+      const prize = prizeCopyForSlot(slotIndex)
+      if (primaryTicket === ticketValue) {
+        return {
+          kind: 'primary',
+          prizeOrdinal: prize.ordinal,
+          prizeReward: prize.reward,
+          prizeTitle: prize.title,
+          slotIndex,
+        }
+      }
+
+      const reserveIndex = (reserveTickets[slotIndex] ?? []).findIndex((reserveTicket) => reserveTicket === ticketValue)
+      if (reserveIndex >= 0) {
+        return {
+          kind: 'reserve',
+          prizeOrdinal: prize.ordinal,
+          prizeReward: prize.reward,
+          prizeTitle: prize.title,
+          reserveRank: reserveIndex + 1,
+          slotIndex,
+        }
+      }
+    }
+
+    return null
+  }
+
+  async function submitTicketNumberLookup(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault()
+    const normalizedTicket = normalizeTicketNumberInput(ticketLookupInput)
+    setTicketLookupInput(normalizedTicket)
+    setTicketLookupResult(null)
+
+    if (normalizedTicket.length !== 6) {
+      setTicketLookupError(copy.ticketHome.ticketNumberInvalid)
+      return
+    }
+
+    const ticketNumber = Number.parseInt(normalizedTicket, 10)
+    if (!Number.isSafeInteger(ticketNumber) || ticketNumber < 1) {
+      setTicketLookupError(copy.ticketHome.ticketLookupNotAssigned)
+      return
+    }
+
+    if (!displayEntry) {
+      setTicketLookupError(copy.ticketHome.ticketLookupNeedsWallet)
+      return
+    }
+
+    let lookupEntry = intervalEntry ?? displayEntry
+    let lookupIntervals = intervals
+    const needsCompleteIntervals = totalIntervalCount > 0 && lookupIntervals.length < totalIntervalCount
+
+    if (needsCompleteIntervals) {
+      if (!onLoadEntryIntervals) {
+        setTicketLookupError(copy.ticketHome.ticketLookupLedgerLoading)
+        return
+      }
+
+      setTicketLookupError('')
+      let fullEntry: RaffleEntry | null
+      try {
+        fullEntry = await onLoadEntryIntervals(displayEntry.userAddress, { offset: 0, limit: 'all' })
+      } catch {
+        setTicketLookupError(copy.ticketHome.ticketLookupLedgerLoading)
+        return
+      }
+      if (!fullEntry) {
+        setTicketLookupError(copy.ticketHome.ticketLookupLedgerLoading)
+        return
+      }
+
+      lookupEntry = fullEntry
+      lookupIntervals = fullEntry.ticketIntervals ?? []
+      setIntervalEntry(fullEntry)
+      setIntervalLoadState('ready')
+    }
+
+    const interval = findTicketInIntervals(lookupIntervals, ticketNumber)
+    const ownerIdentity = entryDisplayIdentity(lookupEntry, walletIdentities)
+    setTicketLookupError('')
+    setTicketLookupResult({
+      interval,
+      ownerAddress: interval ? ownerIdentity.identityAddress : '',
+      ownerName: interval ? ownerIdentity.displayName : copy.ticketHome.ticketLookupNotAssigned,
+      prizeMatch: interval ? findTicketPrizeMatch(ticketNumber) : null,
+      ticketLabel: formatDrawTicketNumber(ticketNumber, ledger.totalFinalTickets),
+    })
+  }
+
   return (
     <>
       <section id="tickets" className="panel hero ticket-home-hero">
@@ -929,6 +1109,20 @@ export function TicketHome({
             </div>
             <div className="ticket-actions">
               <button
+                className={`icon-button ticket-lookup-toggle ${ticketLookupMode ? 'is-active' : ''}`}
+                type="button"
+                onClick={() => {
+                  setTicketLookupMode((current) => !current)
+                  setTicketLookupError('')
+                  setTicketLookupResult(null)
+                }}
+              >
+                {ticketLookupMode ? <ArrowLeft size={18} /> : <Search size={18} />}
+                <span>{ticketLookupMode ? copy.ticketHome.backToTicketRanges : copy.ticketHome.ticketNumberLookupCta}</span>
+              </button>
+              {!ticketLookupMode && (
+                <>
+              <button
                 className={`icon-button copy-ticket-button copy-ticket-button--${copyState}`}
                 type="button"
                 onClick={copyTickets}
@@ -959,13 +1153,86 @@ export function TicketHome({
                     ? copy.ticketHome.exported
                     : exportState === 'failed'
                       ? copy.ticketHome.exportFailed
-                      : copy.ticketHome.exportTickets}
+                  : copy.ticketHome.exportTickets}
                 </span>
               </button>
+                </>
+              )}
             </div>
           </div>
 
-          {displayEntry && totalIntervalCount > 0 ? (
+          {ticketLookupMode ? (
+            <div className="ticket-number-lookup-panel">
+              <form className="ticket-number-lookup-form" onSubmit={submitTicketNumberLookup}>
+                <label>
+                  <span>{copy.ticketHome.ticketNumberLookup}</span>
+                  <div className="ticket-number-lookup-input">
+                    <Hash size={18} />
+                    <input
+                      inputMode="numeric"
+                      maxLength={6}
+                      pattern="[0-9]{6}"
+                      placeholder={copy.ticketHome.ticketNumberPlaceholder}
+                      value={ticketLookupInput}
+                      onChange={(event) => {
+                        setTicketLookupInput(normalizeTicketNumberInput(event.target.value))
+                        setTicketLookupError('')
+                        setTicketLookupResult(null)
+                      }}
+                    />
+                  </div>
+                </label>
+                <button className="icon-button ticket-number-lookup-submit" type="submit">
+                  <Search size={18} />
+                  <span>{copy.common.search}</span>
+                </button>
+              </form>
+              <p className="ticket-number-lookup-hint">{copy.ticketHome.ticketNumberHint}</p>
+              {ticketLookupError && <p className="ticket-number-lookup-error">{ticketLookupError}</p>}
+              {ticketLookupResult && (
+                <article className={`ticket-number-lookup-result ${ticketLookupResult.prizeMatch ? 'is-winning' : 'is-neutral'}`}>
+                  <div className="ticket-number-lookup-result-head">
+                    <span>#{ticketLookupResult.ticketLabel}</span>
+                    <strong>
+                      {ticketLookupResult.prizeMatch
+                        ? ticketLookupResult.prizeMatch.kind === 'primary'
+                          ? copy.ticketHome.ticketLookupPrimary
+                          : `${copy.ticketHome.ticketLookupReserve} #${ticketLookupResult.prizeMatch.reserveRank}`
+                        : copy.ticketHome.ticketLookupNotWinner}
+                    </strong>
+                  </div>
+                  <div className="ticket-number-lookup-grid">
+                    <span>{copy.ticketHome.ticketLookupOwner}</span>
+                    <strong>{ticketLookupResult.ownerName}</strong>
+                    {ticketLookupResult.ownerAddress && (
+                      <>
+                        <span>{copy.ticketHome.wallet}</span>
+                        <strong title={ticketLookupResult.ownerAddress}>{formatAddress(ticketLookupResult.ownerAddress)}</strong>
+                      </>
+                    )}
+                    {ticketLookupResult.interval && (
+                      <>
+                        <span>{copy.ticketHome.ticketLookupRange}</span>
+                        <strong>{formatTicketRange(ticketLookupResult.interval.start, ticketLookupResult.interval.end)}</strong>
+                        <span>{copy.ticketHome.ticketLookupSource}</span>
+                        <strong>{intervalEventText(ticketLookupResult.interval, copy, ledger)}</strong>
+                      </>
+                    )}
+                    {ticketLookupResult.prizeMatch && (
+                      <>
+                        <span>{copy.ticketHome.ticketLookupWinning}</span>
+                        <strong>
+                          {ticketLookupResult.prizeMatch.prizeTitle} #{ticketLookupResult.prizeMatch.prizeOrdinal}
+                        </strong>
+                        <span>{copy.ticketHome.ticketLookupPrizeSlot}</span>
+                        <strong>Slot #{ticketLookupResult.prizeMatch.slotIndex + 1}</strong>
+                      </>
+                    )}
+                  </div>
+                </article>
+              )}
+            </div>
+          ) : displayEntry && totalIntervalCount > 0 ? (
             <div className="ticket-range-lazy-stack">
               {isLoadingInitialIntervals ? (
                 <div className="empty-state interval-loading-state">{copy.ticketHome.loadingTicketRanges}</div>

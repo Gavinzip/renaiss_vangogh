@@ -23,7 +23,7 @@ const dataDir = process.env.LUCKY_DRAW_DATA_DIR || '/data/lucky-draw'
 const cacheDir = process.env.LUCKY_DRAW_CACHE_DIR || join(dataDir, 'cache')
 const ledgerPath = process.env.LUCKY_DRAW_LEDGER_PATH || join(dataDir, 'lucky-draw-ledger.json')
 const identityLookupPath =
-  process.env.LUCKY_DRAW_IDENTITY_LOOKUP_PATH || fileURLToPath(new URL('./data/lucky-draw-wallet-identities.json', import.meta.url))
+  process.env.LUCKY_DRAW_IDENTITY_LOOKUP_PATH || fileURLToPath(new URL('../public/lucky-draw-identities.json', import.meta.url))
 const snapshotDir = process.env.LUCKY_DRAW_SNAPSHOT_DIR || join(dataDir, 'snapshots')
 const snapshotKeep = readIntegerEnv('LUCKY_DRAW_SNAPSHOT_KEEP', 72, 1)
 const port = Number(process.env.PORT || 3000)
@@ -124,6 +124,7 @@ function contentType(path) {
   if (ext === '.png') return 'image/png'
   if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg'
   if (ext === '.webp') return 'image/webp'
+  if (ext === '.mp4') return 'video/mp4'
   return 'application/octet-stream'
 }
 

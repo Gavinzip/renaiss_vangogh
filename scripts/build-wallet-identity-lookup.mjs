@@ -91,19 +91,39 @@ function mergeIdentity(current, next) {
   }
 }
 
+function firstFilled(row, keys) {
+  for (const key of keys) {
+    const value = row[key]?.trim()
+    if (value) return value
+  }
+  return ''
+}
+
+function rowIdentity(row) {
+  return {
+    u: firstFilled(row, ['username', 'platform_user_name']) || null,
+    t: firstFilled(row, ['linked_twitter', 'twitter_handle']) || null,
+    d: firstFilled(row, ['linked_discord', 'discord_username']) || null,
+  }
+}
+
 const { csv, out } = parseArgs()
 const rows = parseCsv(fs.readFileSync(csv, 'utf8'))
 const identities = {}
 let duplicateAddressRows = 0
+const addressColumns = [
+  'old_wallet',
+  'new_wallet',
+  'renaiss_current_address',
+  'safe_account_address',
+  'old_external_wallet',
+  'new_embedded_wallet',
+]
 
 for (const row of rows) {
-  const identity = {
-    u: row.username?.trim() || null,
-    t: row.linked_twitter?.trim() || null,
-    d: row.linked_discord?.trim() || null,
-  }
+  const identity = rowIdentity(row)
 
-  for (const key of ['old_wallet', 'new_wallet']) {
+  for (const key of addressColumns) {
     const address = normalizeAddress(row[key] ?? '')
     if (!address) continue
     if (identities[address]) duplicateAddressRows += 1

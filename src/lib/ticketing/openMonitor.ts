@@ -7,6 +7,9 @@ const IDENTITY_SUGGESTIONS_URL = '/api/identity-suggestions'
 const RAFFLE_ENTRY_URL = '/api/raffle-entry'
 const RAFFLE_SUMMARY_URL = '/api/raffle-summary'
 const OPEN_MONITOR_LUCKY_DRAW_URL = '/open-monitor-api/lucky-draw/leaderboard'
+const SUMMARY_READ_TIMEOUT_MS = 15_000
+const FULL_LEDGER_READ_TIMEOUT_MS = 45_000
+const ENTRY_READ_TIMEOUT_MS = 15_000
 
 let fullLedgerCache: RaffleLedger | null = null
 let fullLedgerCacheKey = ''
@@ -20,6 +23,7 @@ type RaffleEntryRequestOptions = {
 
 type ReadJsonOptions = {
   cache?: RequestCache
+  timeoutMs?: number
 }
 
 type FullLedgerOptions = {
@@ -36,16 +40,34 @@ function versionedUrl(url: string, version = '') {
 }
 
 async function readJson(url: string, options: ReadJsonOptions = {}): Promise<unknown> {
-  const response = await fetch(url, { cache: options.cache ?? 'no-store' })
-  if (!response.ok) {
-    throw new Error(`${url} returned HTTP ${response.status}`)
+  const controller = new AbortController()
+  const timeoutId =
+    options.timeoutMs && options.timeoutMs > 0
+      ? window.setTimeout(() => controller.abort(), options.timeoutMs)
+      : 0
+
+  try {
+    const response = await fetch(url, {
+      cache: options.cache ?? 'no-store',
+      signal: controller.signal,
+    })
+    if (!response.ok) {
+      throw new Error(`${url} returned HTTP ${response.status}`)
+    }
+    const text = await response.text()
+    return JSON.parse(text)
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`${url} timed out while loading raffle data.`, { cause: error })
+    }
+    throw error
+  } finally {
+    if (timeoutId) window.clearTimeout(timeoutId)
   }
-  const text = await response.text()
-  return JSON.parse(text)
 }
 
 export async function loadRaffleLedger(): Promise<RaffleLedger> {
-  const summary = normalizeLoadedLedger(await readJson(RAFFLE_SUMMARY_URL))
+  const summary = normalizeLoadedLedger(await readJson(RAFFLE_SUMMARY_URL, { timeoutMs: SUMMARY_READ_TIMEOUT_MS }))
   if (!summary) {
     throw new Error('Lucky draw ledger summary is missing or invalid.')
   }
@@ -60,6 +82,7 @@ export async function loadFullRaffleLedger({ force = false, version = '' }: Full
   fullLedgerRequestKey = requestKey
   fullLedgerRequest = readJson(versionedUrl(FULL_LEDGER_URL, version), {
     cache: force ? 'reload' : 'default',
+    timeoutMs: FULL_LEDGER_READ_TIMEOUT_MS,
   })
     .then((payload) => {
       const ledger = normalizeLoadedLedger(payload)
@@ -90,7 +113,7 @@ export async function loadRaffleEntry(query: string, options: RaffleEntryRequest
     params.set('intervalLimit', String(options.intervalLimit))
   }
 
-  const payload = (await readJson(`${RAFFLE_ENTRY_URL}?${params.toString()}`)) as {
+  const payload = (await readJson(`${RAFFLE_ENTRY_URL}?${params.toString()}`, { timeoutMs: ENTRY_READ_TIMEOUT_MS })) as {
     entry?: RaffleEntry | null
   }
   return payload.entry ?? null
@@ -104,7 +127,7 @@ export async function loadIdentitySuggestions(query: string, limit = 8): Promise
     limit: String(limit),
     q: normalizedQuery,
   })
-  const payload = (await readJson(`${IDENTITY_SUGGESTIONS_URL}?${params.toString()}`)) as {
+  const payload = (await readJson(`${IDENTITY_SUGGESTIONS_URL}?${params.toString()}`, { timeoutMs: ENTRY_READ_TIMEOUT_MS })) as {
     suggestions?: IdentitySuggestion[]
   }
   return Array.isArray(payload.suggestions) ? payload.suggestions : []

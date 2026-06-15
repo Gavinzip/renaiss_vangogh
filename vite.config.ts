@@ -9,7 +9,7 @@ let devLedgerCache: { ledger: unknown; mtimeMs: number } | null = null
 const DEFAULT_ENTRY_INTERVAL_LIMIT = 0
 const MAX_ENTRY_INTERVAL_LIMIT = 240
 const SUMMARY_LEADERBOARD_LIMIT = 10
-const IDENTITY_LOOKUP_PATH = resolve(process.cwd(), 'scripts/data/lucky-draw-wallet-identities.json')
+const IDENTITY_LOOKUP_PATH = resolve(process.cwd(), 'public/lucky-draw-identities.json')
 
 function readDevLedger() {
   const ledgerPath = resolve(process.cwd(), 'public/lucky-draw-ledger.json')

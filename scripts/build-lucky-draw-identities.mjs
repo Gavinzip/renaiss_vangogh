@@ -99,19 +99,38 @@ for (const entry of ledgerJson.entries ?? []) {
 const rows = parseCsv(fs.readFileSync(csv, 'utf8'))
 const identities = {}
 
-for (const row of rows) {
-  const username = row.username?.trim() ?? ''
-  const linkedTwitter = row.linked_twitter?.trim() ?? ''
-  const linkedDiscord = row.linked_discord?.trim() ?? ''
+function firstFilled(row, keys) {
+  for (const key of keys) {
+    const value = row[key]?.trim()
+    if (value) return value
+  }
+  return ''
+}
 
-  for (const key of ['old_wallet', 'new_wallet']) {
+function rowIdentity(row) {
+  return {
+    username: firstFilled(row, ['username', 'platform_user_name']) || null,
+    linkedTwitter: firstFilled(row, ['linked_twitter', 'twitter_handle']) || null,
+    linkedDiscord: firstFilled(row, ['linked_discord', 'discord_username']) || null,
+  }
+}
+
+const addressColumns = [
+  'old_wallet',
+  'new_wallet',
+  'renaiss_current_address',
+  'safe_account_address',
+  'old_external_wallet',
+  'new_embedded_wallet',
+]
+
+for (const row of rows) {
+  const identity = rowIdentity(row)
+
+  for (const key of addressColumns) {
     const address = normalizeAddress(row[key] ?? '')
     if (!address || !neededAddresses.has(address)) continue
-    identities[address] = {
-      username: username || null,
-      linkedTwitter: linkedTwitter || null,
-      linkedDiscord: linkedDiscord || null,
-    }
+    identities[address] = identity
   }
 }
 

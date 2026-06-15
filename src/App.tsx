@@ -1,5 +1,5 @@
 import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Loader2, LogOut, ShieldCheck, Trophy } from 'lucide-react'
+import { AlertTriangle, Download, Loader2, LogOut, ShieldCheck, Trophy } from 'lucide-react'
 import './App.css'
 import './styles/raffle-foundation.css'
 import './styles/raffle-tickets.css'
@@ -14,6 +14,7 @@ import heroBackgroundImage from './assets/van-gogh-starry-hero-bg.webp'
 import { InitialPageLoader } from './components/InitialPageLoader'
 import { TicketHome } from './components/TicketHome'
 import { WalletSelectorModal } from './components/WalletSelectorModal'
+import { DrawTransactionTimeline } from './components/DrawTransactionTimeline'
 import { initializeAnalytics, trackEvent, trackPageView } from './lib/analytics'
 import { COPY, LANGUAGES, type LanguageCode } from './lib/i18n'
 import { loadFullRaffleLedger, loadIdentitySuggestions, loadRaffleEntry, loadRaffleLedger } from './lib/ticketing/openMonitor'
@@ -77,6 +78,7 @@ const INITIAL_PRELOAD_ASSETS = [renaissLogo, heroBackgroundImage, holoCardFrontI
 const DRAW_TX_STORAGE_KEY = 'renaiss-draw-transactions-v1'
 const DRAW_UNLOCK_SESSION_KEY = 'renaiss-draw-unlocked-v1'
 const EMPTY_LEDGER_HASH = `0x${'0'.repeat(64)}`
+const DRAW_MAINNET_ONLY_START_MS = Date.parse('2026-06-15T21:00:00+08:00')
 
 const PUBLIC_NAV_ITEMS: PageKey[] = ['tickets', 'rules', 'simulator']
 type DrawBusyState = 'connect' | 'read' | 'reset' | 'finalize' | 'draw' | 'drawNext' | null
@@ -113,6 +115,10 @@ function writeStoredDrawUnlocked(value: boolean) {
   } catch {
     // The draw page still works for the current render if sessionStorage is unavailable.
   }
+}
+
+function readMainnetOnlyDrawMode() {
+  return Date.now() >= DRAW_MAINNET_ONLY_START_MS
 }
 
 function createTransactionId(kind: DrawTransactionKind): string {
@@ -229,6 +235,7 @@ export default function App() {
   const [walletSelectorOpen, setWalletSelectorOpen] = useState(false)
   const [walletSelectorNetworkKey, setWalletSelectorNetworkKey] = useState<DrawNetworkKey>('mainnet')
   const [selectedWalletProvider, setSelectedWalletProvider] = useState<WalletProviderOption | null>(null)
+  const [mainnetOnlyDrawMode, setMainnetOnlyDrawMode] = useState(() => readMainnetOnlyDrawMode())
   const [initialAssetsReady, setInitialAssetsReady] = useState(false)
   const [initialCoverPaintReady, setInitialCoverPaintReady] = useState(false)
   const [initialLoaderVisible, setInitialLoaderVisible] = useState(true)
@@ -248,10 +255,10 @@ export default function App() {
   const activeDrawNetworkKey: DrawNetworkKey = isDrawNetworkKey(drawRunMode) ? drawRunMode : 'mainnet'
   const activeDrawNetwork = DRAW_NETWORKS[activeDrawNetworkKey]
   const activeStoredDrawStatus = drawStatusByNetwork[activeDrawNetworkKey] ?? null
-  const activeWinnerTicketsBySlot = wallet ? (activeStoredDrawStatus?.winnerTicketsBySlot ?? []) : []
-  const activeReserveTicketsBySlot = wallet ? (activeStoredDrawStatus?.reserveTicketsBySlot ?? []) : []
-  const activeRevealedPrizeSlots = wallet ? (activeStoredDrawStatus?.revealedPrizeSlots ?? []) : []
-  const activeDrawStatus = wallet ? activeStoredDrawStatus : null
+  const activeWinnerTicketsBySlot = activeStoredDrawStatus?.winnerTicketsBySlot ?? []
+  const activeReserveTicketsBySlot = activeStoredDrawStatus?.reserveTicketsBySlot ?? []
+  const activeRevealedPrizeSlots = activeStoredDrawStatus?.revealedPrizeSlots ?? []
+  const activeDrawStatus = activeStoredDrawStatus
   const activeDrawTxRecords = drawTxRecordsByNetwork[activeDrawNetworkKey] ?? []
   const activeDrawVrfTiming = drawVrfTimingByNetwork[activeDrawNetworkKey] ?? null
   const isActiveContractOwner = sameAddress(wallet?.address, activeDrawStatus?.ownerAddress)
@@ -267,6 +274,27 @@ export default function App() {
   )
 
   useEffect(() => subscribeWalletProviders(setWalletProviderOptions), [])
+
+  useEffect(() => {
+    const syncMainnetOnlyMode = () => setMainnetOnlyDrawMode(readMainnetOnlyDrawMode())
+    syncMainnetOnlyMode()
+    const intervalId = window.setInterval(syncMainnetOnlyMode, 15_000)
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!mainnetOnlyDrawMode || drawRunMode === 'mainnet') return undefined
+    const timeoutId = window.setTimeout(() => {
+      setDrawRunMode('mainnet')
+      setDrawMessage('')
+      setDrawBusy((current) => (current === 'read' ? null : current))
+    }, 0)
+    return () => {
+      window.clearTimeout(timeoutId)
+    }
+  }, [drawRunMode, mainnetOnlyDrawMode])
 
   useEffect(() => {
     const ethereum = wallet?.injectedProvider ?? selectedWalletProvider?.provider
@@ -472,7 +500,7 @@ export default function App() {
   }, [fullLedger, fullLedgerIsCurrent, needsFullLedger, summaryLedgerKey])
 
   useEffect(() => {
-    if (!ledger || fullLedgerIsCurrent) return undefined
+    if (!needsFullLedger || !ledger || fullLedgerIsCurrent) return undefined
 
     const preloadKey = summaryLedgerKey || 'current'
     if (fullLedgerPreloadKeyRef.current === preloadKey) return undefined
@@ -497,7 +525,7 @@ export default function App() {
       alive = false
       window.clearTimeout(timeoutId)
     }
-  }, [fullLedger, fullLedgerIsCurrent, ledger, summaryLedgerKey])
+  }, [fullLedger, fullLedgerIsCurrent, ledger, needsFullLedger, summaryLedgerKey])
 
   useEffect(() => {
     let alive = true
@@ -552,6 +580,16 @@ export default function App() {
   }
 
   function handleDrawRunModeChange(nextMode: DrawRunMode) {
+    if (mainnetOnlyDrawMode && nextMode !== 'mainnet') {
+      setDrawRunMode('mainnet')
+      setDrawMessage('')
+      setDrawBusy((current) => (current === 'read' ? null : current))
+      trackEvent('draw_run_mode_change', {
+        mode: 'mainnet',
+        locked_after: '2026-06-15T21:00:00+08:00',
+      })
+      return
+    }
     setDrawRunMode(nextMode)
     setDrawMessage('')
     setDrawBusy((current) => (current === 'read' ? null : current))
@@ -604,7 +642,7 @@ export default function App() {
 
     setDrawTxRecordsByNetwork((current) => ({
       ...current,
-      [networkKey]: [initialRecord, ...(current[networkKey] ?? [])].slice(0, 24),
+      [networkKey]: [initialRecord, ...(current[networkKey] ?? [])],
     }))
     setDrawMessage(`${label}: ${copy.walletPanel.txAwaitingSignature}`)
 
@@ -687,13 +725,20 @@ export default function App() {
     })
   }
 
-  async function readStatusForWallet(activeWallet: ConnectedWallet, networkKey: DrawNetworkKey): Promise<DrawStatus> {
+  async function readStatusForNetwork(
+    networkKey: DrawNetworkKey,
+    activeWallet: ConnectedWallet | null = wallet,
+  ): Promise<DrawStatus> {
     const network = DRAW_NETWORKS[networkKey]
-    const providerForSelectedNetwork = activeWallet.chainId === network.chainId ? activeWallet.provider : undefined
-    const nextStatus = await readDrawStatus(providerForSelectedNetwork, network.contractAddress, networkKey, activeWallet.address)
+    const providerForSelectedNetwork = activeWallet?.chainId === network.chainId ? activeWallet.provider : undefined
+    const nextStatus = await readDrawStatus(providerForSelectedNetwork, network.contractAddress, networkKey, activeWallet?.address ?? '')
     setDrawStatusByNetwork((current) => ({ ...current, [networkKey]: nextStatus }))
     updateVrfTimingFromStatus(networkKey, nextStatus)
     return nextStatus
+  }
+
+  async function readStatusForWallet(activeWallet: ConnectedWallet, networkKey: DrawNetworkKey): Promise<DrawStatus> {
+    return readStatusForNetwork(networkKey, activeWallet)
   }
 
   async function readStatusForWalletUntil(
@@ -774,14 +819,15 @@ export default function App() {
   ])
 
   useEffect(() => {
-    if (activePage !== 'draw') return undefined
-    if (!wallet || wallet.chainId !== activeDrawNetwork.chainId || drawBusy !== null) return undefined
+    if (activePage !== 'draw' && activePage !== 'tickets') return undefined
+    if (drawBusy !== null) return undefined
     let cancelled = false
-    const activeWallet = wallet
+    const providerForSelectedNetwork = wallet?.chainId === activeDrawNetwork.chainId ? wallet.provider : undefined
+    const walletAddress = wallet?.chainId === activeDrawNetwork.chainId ? wallet.address : ''
 
     async function syncSelectedNetworkStatus() {
       try {
-        const nextStatus = await readDrawStatus(activeWallet.provider, activeDrawNetwork.contractAddress, activeDrawNetworkKey, activeWallet.address)
+        const nextStatus = await readDrawStatus(providerForSelectedNetwork, activeDrawNetwork.contractAddress, activeDrawNetworkKey, walletAddress)
         if (cancelled) return
         setDrawStatusByNetwork((current) => ({ ...current, [activeDrawNetworkKey]: nextStatus }))
         updateVrfTimingFromStatus(activeDrawNetworkKey, nextStatus)
@@ -790,14 +836,14 @@ export default function App() {
         trackEvent('draw_status_read', {
           network: activeDrawNetworkKey,
           status: 'error',
-          trigger: 'auto_sync',
+          trigger: walletAddress ? 'auto_sync' : 'public_auto_sync',
         })
       }
     }
 
     const timeoutId = window.setTimeout(() => {
       void syncSelectedNetworkStatus()
-    }, 300)
+    }, activePage === 'draw' ? 300 : 900)
 
     return () => {
       cancelled = true
@@ -870,23 +916,15 @@ export default function App() {
   }
 
   async function refreshDrawStatus(networkKey = activeDrawNetworkKey) {
-    if (!wallet) {
-      setDrawMessage(copy.walletPanel.connectFirst)
-      trackEvent('draw_status_read', {
-        network: networkKey,
-        status: 'blocked_no_wallet',
-      })
-      return
-    }
     setDrawBusy('read')
     setDrawMessage(`${copy.walletPanel.read}: ${copy.common.pending}`)
     try {
-      await readStatusForWallet(wallet, networkKey)
+      await readStatusForNetwork(networkKey, wallet)
       setDrawMessage(`${copy.walletPanel.read}: ${copy.walletPanel.statusUpdated}`)
       trackEvent('draw_status_read', {
         network: networkKey,
         status: 'success',
-        trigger: 'manual_refresh',
+        trigger: wallet ? 'manual_refresh' : 'public_manual_refresh',
       })
     } catch (error) {
       trackEvent('draw_status_read', {
@@ -1260,7 +1298,7 @@ export default function App() {
     drawUnlockHitsRef.current = 0
     writeStoredDrawUnlocked(true)
     setDrawUnlocked(true)
-    setPage('draw')
+    handlePageChange('draw')
     trackEvent('hidden_draw_unlock', {
       status: 'success',
     })
@@ -1375,6 +1413,9 @@ export default function App() {
             setQuery={setQuery}
             connectedAddress={wallet?.address}
             walletIdentities={walletIdentities}
+            winnerTicketsBySlot={activeWinnerTicketsBySlot}
+            reserveTicketsBySlot={activeReserveTicketsBySlot}
+            revealedPrizeSlots={activeRevealedPrizeSlots}
             copy={copy}
             language={language}
             lastLedgerRefreshAt={lastLedgerRefreshAt}
@@ -1453,6 +1494,7 @@ export default function App() {
                 walletIdentities={walletIdentities}
                 copy={copy}
                 drawStatus={activeDrawStatus}
+                isMainnetOnlyMode={mainnetOnlyDrawMode}
                 hasWallet={Boolean(wallet)}
                 isContractBusy={drawBusy === 'reset' || drawBusy === 'finalize' || drawBusy === 'draw' || drawBusy === 'drawNext'}
                 isContractLedgerMismatch={isActiveContractLedgerMismatch}
@@ -1465,6 +1507,18 @@ export default function App() {
                 onRequestDraw={() => requestDrawRound(activeDrawNetworkKey)}
                 onDrawContractPrizeSlots={(prizeSlotIndexes) => drawContractPrizeSlots(prizeSlotIndexes, activeDrawNetworkKey)}
               />
+              <DrawTransactionTimeline network={activeDrawNetwork} records={activeDrawTxRecords} copy={copy} />
+              <section className="panel ledger-download-panel">
+                <div>
+                  <span className="eyebrow">{copy.draw.ledgerDownloadEyebrow}</span>
+                  <h2>{copy.draw.ledgerDownloadTitle}</h2>
+                  <p>{copy.draw.ledgerDownloadCopy}</p>
+                </div>
+                <a className="icon-button ledger-download-button" href={DRAW_LEDGER_URI} download="renaiss-lucky-draw-ledger.json">
+                  <Download size={18} />
+                  <span>{copy.draw.downloadLedger}</span>
+                </a>
+              </section>
               <WalletPanel
                 network={activeDrawNetwork}
                 wallet={wallet}
@@ -1473,7 +1527,6 @@ export default function App() {
                 ledgerTotalTickets={currentFullLedger.totalFinalTickets}
                 ledgerHash={currentFullLedger.ledgerHash}
                 prizeSlotCount={TOTAL_PRIZE_DRAW_SLOTS}
-                transactionRecords={activeDrawTxRecords}
                 vrfTiming={activeDrawVrfTiming}
                 authorizedOperatorAddress={activeDrawStatus?.drawOperatorAddress ?? activeDrawNetwork.authorizedOperatorAddress}
                 isAuthorizedOperator={isActiveAuthorizedOperator}
