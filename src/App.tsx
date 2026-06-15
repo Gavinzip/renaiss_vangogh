@@ -1,4 +1,4 @@
-import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Download, Loader2, LogOut, ShieldCheck, Trophy } from 'lucide-react'
 import './App.css'
 import './styles/raffle-foundation.css'
@@ -92,8 +92,9 @@ const DRAW_UNLOCK_SESSION_KEY = 'renaiss-draw-unlocked-v1'
 const EMPTY_LEDGER_HASH = `0x${'0'.repeat(64)}`
 const DRAW_MAINNET_ONLY_START_AT = '2026-06-15T00:00:00+08:00'
 const DRAW_MAINNET_ONLY_START_MS = Date.parse(DRAW_MAINNET_ONLY_START_AT)
+const DRAW_WINNER_LIST_ONLY = true
 
-const PUBLIC_NAV_ITEMS: PageKey[] = ['tickets', 'rules', 'simulator']
+const PUBLIC_NAV_ITEMS: PageKey[] = ['tickets', 'rules', 'simulator', 'draw']
 type DrawBusyState = 'connect' | 'read' | 'reset' | 'finalize' | 'draw' | 'drawNext' | null
 
 function readStoredDrawTransactions(): DrawTransactionRecordsByNetwork {
@@ -152,7 +153,7 @@ function PageHeader({
       <div>
         <span className="eyebrow">{eyebrow}</span>
         <h1>{title}</h1>
-        <p>{copy}</p>
+        {copy && <p>{copy}</p>}
       </div>
     </section>
   )
@@ -308,7 +309,7 @@ export default function App() {
   const entryRequestRef = useRef(0)
   const fullLedgerPreloadKeyRef = useRef('')
   const copy = COPY[language]
-  const activePage: PageKey = page === 'draw' && !drawUnlocked ? 'simulator' : page
+  const activePage: PageKey = page
   const needsFullLedger = activePage === 'simulator' || activePage === 'draw'
   const summaryLedgerKey = ledgerCacheKey(ledger)
   const fullLedgerKey = ledgerCacheKey(fullLedger)
@@ -409,10 +410,7 @@ export default function App() {
   }, [copy.walletPanel.connectionFailed, selectedWalletProvider, wallet?.injectedProvider, wallet?.walletName])
   const initialCoverAssetsReady = Boolean(ledger && displayLedger && initialAssetsReady)
   const initialExperienceReady = initialCoverAssetsReady && initialCoverPaintReady
-  const visibleNavItems = useMemo<PageKey[]>(
-    () => (drawUnlocked ? [...PUBLIC_NAV_ITEMS, 'draw'] : PUBLIC_NAV_ITEMS),
-    [drawUnlocked],
-  )
+  const visibleNavItems = PUBLIC_NAV_ITEMS
 
   useEffect(() => {
     try {
@@ -1490,23 +1488,17 @@ export default function App() {
             </a>
             <nav className="nav-links nav-inline-links" aria-label="Lucky draw pages">
               {visibleNavItems.map((key) => (
-                <Fragment key={key}>
-                  <a
-                    className={activePage === key ? 'active' : ''}
-                    href={`#${key}`}
-                    onClick={(event) => {
-                      event.preventDefault()
-                      handlePageChange(key)
-                    }}
-                  >
-                    {copy.nav[key]}
-                  </a>
-                  {key === 'simulator' && (
-                    <span className="nav-coming-soon" aria-disabled="true">
-                      {copy.nav.comingSoon}
-                    </span>
-                  )}
-                </Fragment>
+                <a
+                  className={activePage === key ? 'active' : ''}
+                  href={`#${key}`}
+                  key={key}
+                  onClick={(event) => {
+                    event.preventDefault()
+                    handlePageChange(key)
+                  }}
+                >
+                  {copy.nav[key]}
+                </a>
               ))}
             </nav>
             <div className="nav-visible-actions">
@@ -1658,13 +1650,13 @@ export default function App() {
                 onRefreshStatus={() => refreshDrawStatus(activeDrawNetworkKey)}
                 onRequestDraw={() => requestDrawRound(activeDrawNetworkKey)}
                 onDrawContractPrizeSlots={(prizeSlotIndexes) => drawContractPrizeSlots(prizeSlotIndexes, activeDrawNetworkKey)}
+                isWinnerListOnly={DRAW_WINNER_LIST_ONLY}
               />
               <DrawTransactionTimeline
                 network={activeDrawNetwork}
                 records={activeDrawTxRecords}
                 chainTransactions={activeDrawEventHistory?.history?.transactions ?? []}
                 chainStatus={activeDrawEventHistoryKey ? activeDrawEventHistory?.status ?? 'loading' : 'idle'}
-                chainError={activeDrawEventHistory?.error ?? ''}
                 copy={copy}
               />
               <section className="panel ledger-download-panel">

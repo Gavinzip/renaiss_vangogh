@@ -28,7 +28,7 @@ const EN_COPY = {
     rules: 'Rules & Prizes',
     simulator: 'Simulation',
     comingSoon: 'Coming Soon',
-    draw: 'Draw',
+    draw: 'Winners',
   },
   ticketHome: {
     chainBadge: 'RWA on BNB Chain',
@@ -212,9 +212,9 @@ const EN_COPY = {
     ],
   },
   draw: {
-    eyebrow: 'Draw',
-    title: 'On-chain draw',
-    copy: 'Finalize the ledger hash, request VRF from the operator wallet, then let any connected wallet reveal winners from the verified contract.',
+    eyebrow: 'Winners',
+    title: 'Winner List',
+    copy: '',
     liveReady: 'Livestream ready',
     liveTitle: 'Draw from the locked ledger',
     liveCopy: 'The public page can show the ledger hash and final ticket count while the operator wallet requests VRF and any wallet can trigger the reveal transactions.',
@@ -489,7 +489,7 @@ export const COPY: Record<LanguageCode, AppCopy> = {
   'zh-TW': {
     ...EN_COPY,
     common: { ...EN_COPY.common, connectWallet: '連接錢包', search: '查詢', pending: '等待中', notGenerated: '尚未產生', noBonus: '無加成', source: '來源', language: '語言' },
-    nav: { tickets: '我的票券', rules: '規則與獎項', simulator: '模擬抽獎', comingSoon: '即將開放', draw: '抽獎' },
+    nav: { tickets: '我的票券', rules: '規則與獎項', simulator: '模擬抽獎', comingSoon: '即將開放', draw: '中獎名單' },
     ticketHome: {
       ...EN_COPY.ticketHome,
       chainBadge: 'BNB Chain 上的 RWA 抽獎',
@@ -649,9 +649,9 @@ export const COPY: Record<LanguageCode, AppCopy> = {
     },
     draw: {
       ...EN_COPY.draw,
-      eyebrow: 'Draw',
-      title: '鏈上抽獎',
-      copy: '主要舞台可先用展示模式確認直播效果；正式開獎時再切到 BSC 合約，由操作者錢包請求 VRF，隨機數就緒後任何連接錢包都可觸發揭曉。',
+      eyebrow: 'Winners',
+      title: '中獎名單',
+      copy: '',
       liveReady: '直播畫面',
       liveTitle: '鎖定帳本後進行抽獎',
       liveCopy: '公開頁會顯示帳本 Hash、總票數與抽獎進度；正式抽獎由操作者錢包請求 VRF，任何錢包都可送出揭曉交易。',
@@ -910,7 +910,7 @@ export const COPY: Record<LanguageCode, AppCopy> = {
   'zh-CN': {
     ...EN_COPY,
     common: { ...EN_COPY.common, connectWallet: '连接钱包', search: '查询', pending: '等待中', notGenerated: '尚未生成', noBonus: '无加成', source: '来源', language: '语言' },
-    nav: { tickets: '我的票券', rules: '规则与奖项', simulator: '模拟抽奖', comingSoon: '即将开放', draw: '抽奖' },
+    nav: { tickets: '我的票券', rules: '规则与奖项', simulator: '模拟抽奖', comingSoon: '即将开放', draw: '中奖名单' },
     ticketHome: {
       ...EN_COPY.ticketHome,
       chainBadge: 'BNB Chain 上的 RWA 抽奖',
@@ -1264,7 +1264,7 @@ export const COPY: Record<LanguageCode, AppCopy> = {
   ko: {
     ...EN_COPY,
     common: { ...EN_COPY.common, connectWallet: '지갑 연결', search: '검색', pending: '대기 중', notGenerated: '아직 생성 안 됨', noBonus: '보너스 없음', source: '출처', language: '언어' },
-    nav: { tickets: '내 티켓', rules: '규칙 및 상품', simulator: '모의 추첨', comingSoon: '곧 공개', draw: '추첨' },
+    nav: { tickets: '내 티켓', rules: '규칙 및 상품', simulator: '모의 추첨', comingSoon: '곧 공개', draw: '당첨자' },
     ticketHome: {
       ...EN_COPY.ticketHome,
       chainBadge: 'BNB Chain RWA 추첨',
@@ -1345,7 +1345,7 @@ export const COPY: Record<LanguageCode, AppCopy> = {
   th: {
     ...EN_COPY,
     common: { ...EN_COPY.common, connectWallet: 'เชื่อมต่อวอลเล็ต', search: 'ค้นหา', pending: 'รอดำเนินการ', notGenerated: 'ยังไม่สร้าง', noBonus: 'ไม่มีโบนัส', source: 'แหล่งที่มา', language: 'ภาษา' },
-    nav: { tickets: 'ตั๋วของฉัน', rules: 'กฎและรางวัล', simulator: 'จำลอง', comingSoon: 'เร็ว ๆ นี้', draw: 'สุ่มรางวัล' },
+    nav: { tickets: 'ตั๋วของฉัน', rules: 'กฎและรางวัล', simulator: 'จำลอง', comingSoon: 'เร็ว ๆ นี้', draw: 'ผู้ชนะ' },
     ticketHome: {
       ...EN_COPY.ticketHome,
       chainBadge: 'RWA บน BNB Chain',
@@ -1426,7 +1426,7 @@ export const COPY: Record<LanguageCode, AppCopy> = {
   vi: {
     ...EN_COPY,
     common: { ...EN_COPY.common, connectWallet: 'Kết nối ví', search: 'Tìm kiếm', pending: 'Đang chờ', notGenerated: 'Chưa tạo', noBonus: 'Không bonus', source: 'Nguồn', language: 'Ngôn ngữ' },
-    nav: { tickets: 'Vé của tôi', rules: 'Luật & giải thưởng', simulator: 'Mô phỏng', comingSoon: 'Sắp mở', draw: 'Quay thưởng' },
+    nav: { tickets: 'Vé của tôi', rules: 'Luật & giải thưởng', simulator: 'Mô phỏng', comingSoon: 'Sắp mở', draw: 'Người thắng' },
     ticketHome: {
       ...EN_COPY.ticketHome,
       chainBadge: 'RWA trên BNB Chain',

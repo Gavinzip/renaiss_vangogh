@@ -44,14 +44,12 @@ export function DrawTransactionTimeline({
   records,
   chainTransactions = [],
   chainStatus = 'idle',
-  chainError = '',
   copy,
 }: {
   network: DrawNetworkConfig
   records: DrawTransactionRecord[]
   chainTransactions?: DrawChainEventTransaction[]
   chainStatus?: 'idle' | 'loading' | 'ready' | 'error'
-  chainError?: string
   copy: AppCopy
 }) {
   const [clockNow, setClockNow] = useState(() => Date.now())
@@ -61,6 +59,7 @@ export function DrawTransactionTimeline({
   const visibleCount = showingChain ? chainTransactions.length : visibleRecords.length
   const headerEyebrow = showingChain ? copy.walletPanel.chainTransactions : copy.walletPanel.localTransactionFallback
   const headerTitle = showingChain ? copy.walletPanel.chainTransactionTimeline : copy.walletPanel.transactionTimeline
+  const shouldHideEmptyFallback = !showingChain && visibleRecords.length === 0
 
   useEffect(() => {
     const hasActiveRecord = records.some((record) => record.status === 'awaiting-signature' || record.status === 'pending')
@@ -70,6 +69,10 @@ export function DrawTransactionTimeline({
       window.clearInterval(intervalId)
     }
   }, [records])
+
+  if (shouldHideEmptyFallback) {
+    return null
+  }
 
   return (
     <section className="panel draw-transaction-timeline" aria-label={headerTitle}>
@@ -88,13 +91,6 @@ export function DrawTransactionTimeline({
                 : copy.walletPanel.noSessionTransactions}
         </strong>
       </div>
-
-      {chainStatus === 'error' && (
-        <p className="draw-transaction-note">
-          {copy.walletPanel.chainEventUnavailable}
-          {chainError ? ` ${chainError}` : ''}
-        </p>
-      )}
 
       {showingChain && chainTransactions.length > 0 ? (
         <div className="draw-transaction-scroll" role="list" tabIndex={0}>

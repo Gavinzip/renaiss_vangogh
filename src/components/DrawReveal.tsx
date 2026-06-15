@@ -173,6 +173,7 @@ export function DrawReveal({
   onRefreshStatus,
   onRequestDraw,
   onDrawContractPrizeSlots,
+  isWinnerListOnly = false,
 }: {
   runMode: DrawRunMode
   onRunModeChange: (mode: DrawRunMode) => void
@@ -196,6 +197,7 @@ export function DrawReveal({
   onRefreshStatus: () => Promise<void>
   onRequestDraw: () => Promise<void>
   onDrawContractPrizeSlots: (prizeSlotIndexes: number[]) => Promise<ContractRevealResult[]>
+  isWinnerListOnly?: boolean
 }) {
   const [phase, setPhase] = useState<'idle' | 'video' | 'reveal'>('idle')
   const [digitRevealState, setDigitRevealState] = useState({ ticketNumber: '', count: 0 })
@@ -1238,316 +1240,320 @@ export function DrawReveal({
   }
 
   return (
-    <section className="panel draw-reveal-panel" ref={rootRef}>
-      <div className="draw-reveal-heading">
-        <div className="draw-reveal-title-block">
-          <span className="eyebrow">{copy.drawReveal.eyebrow}</span>
-          <h2>{copy.drawReveal.title}</h2>
-        </div>
-        <div className="draw-reveal-mode-shell">
-          <div
-            className={`draw-reveal-mode-switch ${isMainnetOnlyMode ? 'is-mainnet-only' : ''}`}
-            role="tablist"
-            aria-label={copy.drawReveal.runMode}
-          >
-            {!isMainnetOnlyMode && (
-              <button className={runMode === 'showcase' ? 'is-active' : ''} type="button" role="tab" aria-selected={runMode === 'showcase'} onClick={() => selectRunMode('showcase')}>
-                {copy.drawReveal.showcaseMode}
-              </button>
-            )}
-            {!isMainnetOnlyMode && (
-              <button className={runMode === 'testnet' ? 'is-active' : ''} type="button" role="tab" aria-selected={runMode === 'testnet'} onClick={() => selectRunMode('testnet')}>
-                {copy.drawReveal.testnetMode}
-              </button>
-            )}
-            <button className={runMode === 'mainnet' ? 'is-active' : ''} type="button" role="tab" aria-selected={runMode === 'mainnet'} onClick={() => selectRunMode('mainnet')}>
-              {copy.drawReveal.mainnetMode}
-            </button>
-          </div>
-        </div>
-        <div className="draw-reveal-actions">
-          <button className="icon-button draw-reveal-demo" type="button" onClick={queueSelectedDraw} disabled={isRunDisabled}>
-            {isSequenceRunning || isContractBusy ? <Loader2 className="spin" size={17} /> : <Play size={17} />}
-            <span>{primaryRunLabel}</span>
-          </button>
-          {isLiveRunMode && hasWallet && drawStatus && (drawStatus.finalized || drawStatus.winnerCount > 0n) && (
-            <button className="icon-button draw-reveal-reset" type="button" onClick={resetLiveRound} disabled={isSequenceRunning || isContractBusy}>
-              <RotateCcw size={17} />
-              <span>{copy.walletPanel.resetRound}</span>
-            </button>
-          )}
-          <button className="icon-button draw-reveal-replay" type="button" onClick={replay} disabled={!hasTicketNumber || isSequenceRunning || isIntroVideoBlocked}>
-            <RotateCcw size={17} />
-            <span>{copy.drawReveal.replay}</span>
-          </button>
-        </div>
-      </div>
-
-      <div className="draw-reveal-console">
-        <div className="draw-reveal-control-group draw-reveal-prize-control">
-          <span>{copy.drawReveal.selectPrize}</span>
-          <div className="draw-reveal-prize-tabs" role="tablist" aria-label={copy.drawReveal.selectPrize}>
-            {PRIZE_GROUPS.map((group) => {
-              const drawn = prizeGroupProgress(group.id)
-              return (
-                <button
-                  className={activePrizeGroupId === group.id ? 'is-active' : ''}
-                  type="button"
-                  role="tab"
-                  aria-selected={activePrizeGroupId === group.id}
-                  key={group.id}
-                  onClick={() => {
-                    setSelectedPrizeGroupId(group.id)
-                    setBatchRevealCount(group.slotCount > 1 ? group.slotCount : 1)
-                  }}
-                >
-                  <strong>{prizeLabels[group.id]}</strong>
-                  <small>
-                    {drawn}/{group.slotCount}
-                  </small>
+    <section className={`panel draw-reveal-panel${isWinnerListOnly ? ' draw-reveal-panel--winner-list' : ''}`} ref={rootRef}>
+      {!isWinnerListOnly && (
+        <>
+          <div className="draw-reveal-heading">
+            <div className="draw-reveal-title-block">
+              <span className="eyebrow">{copy.drawReveal.eyebrow}</span>
+              <h2>{copy.drawReveal.title}</h2>
+            </div>
+            <div className="draw-reveal-mode-shell">
+              <div
+                className={`draw-reveal-mode-switch ${isMainnetOnlyMode ? 'is-mainnet-only' : ''}`}
+                role="tablist"
+                aria-label={copy.drawReveal.runMode}
+              >
+                {!isMainnetOnlyMode && (
+                  <button className={runMode === 'showcase' ? 'is-active' : ''} type="button" role="tab" aria-selected={runMode === 'showcase'} onClick={() => selectRunMode('showcase')}>
+                    {copy.drawReveal.showcaseMode}
+                  </button>
+                )}
+                {!isMainnetOnlyMode && (
+                  <button className={runMode === 'testnet' ? 'is-active' : ''} type="button" role="tab" aria-selected={runMode === 'testnet'} onClick={() => selectRunMode('testnet')}>
+                    {copy.drawReveal.testnetMode}
+                  </button>
+                )}
+                <button className={runMode === 'mainnet' ? 'is-active' : ''} type="button" role="tab" aria-selected={runMode === 'mainnet'} onClick={() => selectRunMode('mainnet')}>
+                  {copy.drawReveal.mainnetMode}
                 </button>
-              )
-            })}
-          </div>
-        </div>
-
-        <div className="draw-reveal-control-group draw-reveal-method-control">
-          <span>{copy.drawReveal.drawMode}</span>
-          <div className="draw-reveal-mode-tabs">
-            <button className={effectiveDrawMode === 'single' ? 'is-active' : ''} type="button" onClick={() => setDrawMode('single')}>
-              <Sparkles size={15} />
-              {copy.drawReveal.singleDraw}
-            </button>
-            <button className={effectiveDrawMode === 'batch' ? 'is-active' : ''} type="button" onClick={() => setDrawMode('batch')} disabled={!selectedGroupCanBatch}>
-              <FastForward size={15} />
-              {copy.drawReveal.batchDraw}
-            </button>
-          </div>
-          {effectiveDrawMode === 'batch' && selectedGroupCanBatch && (
-            <label className="draw-reveal-batch-count">
-              <span>{copy.drawReveal.batchCount}</span>
-              <input
-                type="number"
-                min={1}
-                max={Math.max(1, selectedRemainingSlotCount)}
-                value={selectedBatchDrawCount}
-                onChange={(event) => {
-                  const value = Number.parseInt(event.target.value, 10)
-                  const maxCount = Math.max(1, selectedRemainingSlotCount)
-                  const nextValue = Number.isFinite(value) ? Math.min(Math.max(1, value), maxCount) : 1
-                  setBatchRevealCount(nextValue)
-                }}
-              />
-            </label>
-          )}
-          {!selectedGroupCanBatch && <small className="draw-reveal-control-hint">{copy.drawReveal.grandSingleOnly}</small>}
-        </div>
-
-        <div className="draw-reveal-runner">
-          {isLiveRunMode && (
-            <div className="draw-reveal-contract-status">
-              <span>{copy.drawReveal.contractStatus}</span>
-              <strong>{liveContractStatus}</strong>
-              <small>
-                {copy.drawReveal.revealedCount}: {compactNumber(drawStatus?.winnerCount ?? revealedPrizeSlotIndexes.length)} / {compactNumber(TOTAL_PRIZE_DRAW_SLOTS)}
-              </small>
-            </div>
-          )}
-          {runMode === 'showcase' && (
-            <button className="draw-reveal-run-secondary" type="button" onClick={resetDemo} disabled={isSequenceRunning || demoResults.length === 0}>
-              {copy.drawReveal.resetShowcase}
-            </button>
-          )}
-        </div>
-      </div>
-
-      <div
-        className={`draw-reveal-stage draw-reveal-stage--${phase}${isBatchReveal ? ' draw-reveal-stage--batch' : ''}`}
-        role={canAdvanceRevealDigits ? 'button' : undefined}
-        tabIndex={canAdvanceRevealDigits ? 0 : undefined}
-        aria-label={canAdvanceRevealDigits ? copy.drawReveal.clickNext : undefined}
-        onClick={() => {
-          if (canAdvanceRevealDigits) {
-            setDigitRevealState((state) => ({
-              ticketNumber,
-              count: Math.min(ticketDigits.length, state.ticketNumber === ticketNumber ? state.count + 1 : 1),
-            }))
-          }
-        }}
-        onKeyDown={(event) => {
-          if (event.key !== 'Enter' && event.key !== ' ') return
-          event.preventDefault()
-          if (canAdvanceRevealDigits) {
-            setDigitRevealState((state) => ({
-              ticketNumber,
-              count: Math.min(ticketDigits.length, state.ticketNumber === ticketNumber ? state.count + 1 : 1),
-            }))
-          }
-        }}
-      >
-        <video
-          ref={videoRef}
-          className="draw-reveal-video"
-          src={DRAW_ANIMATION_SRC}
-          playsInline
-          preload="auto"
-          onLoadedData={(event) => updateVideoReadiness(event.currentTarget)}
-          onCanPlay={(event) => updateVideoReadiness(event.currentTarget)}
-          onCanPlayThrough={(event) => updateVideoReadiness(event.currentTarget)}
-          onError={markVideoLoadError}
-        />
-
-        <div className={`draw-reveal-result${isBatchReveal ? ' draw-reveal-result--batch' : ''}`} aria-live="polite">
-          {isBatchReveal ? (
-            <div className={`draw-reveal-batch-grid ${batchGridClassName}`}>
-              {activeBatchReveal.map((result) => (
-                <article className="draw-reveal-batch-ticket" key={`${result.source}-${result.slotIndex}-${result.ticket}`}>
-                  <img src={goldTicketImage} alt={copy.drawReveal.ticketAlt} decoding="async" />
-                  <div className="draw-reveal-batch-shine" aria-hidden="true" />
-                  <div className="draw-reveal-batch-number">
-                    <span>{`${prizeLabels[result.prizeGroupId]} #${result.prizeOrdinal}`}</span>
-                    <strong aria-label={`#${formatDrawTicketNumber(result.ticket, totalTickets)}`}>#{formatDrawTicketNumber(result.ticket, totalTickets)}</strong>
-                  </div>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <div className="draw-reveal-ticket">
-              <img src={goldTicketImage} alt={copy.drawReveal.ticketAlt} decoding="async" />
-              <div className="draw-reveal-shine" aria-hidden="true" />
-              <div className="draw-reveal-number-wrap">
-                <div className="draw-reveal-number-burst" aria-hidden="true" />
-                <span>{statusLabel}</span>
-                {hasTicketNumber ? (
-                  <strong aria-label={ticketAriaLabel}>
-                    {hasTicketNumber && <span className="draw-reveal-prefix">#</span>}
-                    {ticketDigits.map((digit, index) => (
-                      <span
-                        className={`draw-reveal-digit ${index < revealedDigitCount ? 'is-visible' : ''}`}
-                        data-digit-index={index}
-                        key={`${ticketNumber}-${index}`}
-                      >
-                        {digit}
-                      </span>
-                    ))}
-                  </strong>
-                ) : (
-                  <div className="draw-reveal-ready-state" aria-label={ticketAriaLabel}>
-                    <strong>{stageReadyTitle}</strong>
-                    {stageReadyCopy && <small>{stageReadyCopy}</small>}
-                  </div>
-                )}
-                {hasTicketNumber && !isRevealComplete && (
-                  <small className="draw-reveal-click-cue">{copy.drawReveal.clickNext}</small>
-                )}
               </div>
             </div>
-          )}
-
-          <div className="draw-reveal-meta">
-            <span>
-              {copy.drawReveal.totalTickets}: {compactNumber(totalTickets)}
-            </span>
-            {statusCopy && <span>{statusCopy}</span>}
+            <div className="draw-reveal-actions">
+              <button className="icon-button draw-reveal-demo" type="button" onClick={queueSelectedDraw} disabled={isRunDisabled}>
+                {isSequenceRunning || isContractBusy ? <Loader2 className="spin" size={17} /> : <Play size={17} />}
+                <span>{primaryRunLabel}</span>
+              </button>
+              {isLiveRunMode && hasWallet && drawStatus && (drawStatus.finalized || drawStatus.winnerCount > 0n) && (
+                <button className="icon-button draw-reveal-reset" type="button" onClick={resetLiveRound} disabled={isSequenceRunning || isContractBusy}>
+                  <RotateCcw size={17} />
+                  <span>{copy.walletPanel.resetRound}</span>
+                </button>
+              )}
+              <button className="icon-button draw-reveal-replay" type="button" onClick={replay} disabled={!hasTicketNumber || isSequenceRunning || isIntroVideoBlocked}>
+                <RotateCcw size={17} />
+                <span>{copy.drawReveal.replay}</span>
+              </button>
+            </div>
           </div>
-        </div>
-      </div>
 
-      {drawSequenceMessage && (
-        <p className={`draw-reveal-sequence-message${isLiveRunMode ? ' draw-reveal-sequence-message--live' : ''}`}>
-          {drawSequenceMessage}
-        </p>
-      )}
-
-      {phase === 'reveal' && hasTicketNumber && !isBatchReveal && (
-        <section className={`draw-reveal-candidates ${candidateSnapshot ? 'draw-reveal-candidates--active' : 'draw-reveal-candidates--idle'}`} aria-live="polite">
-          <div className="draw-reveal-candidate-head">
-            <div>
-              <span>{copy.drawReveal.candidateTitle}</span>
-              <strong>{candidateSnapshot ? `#${candidateSnapshot.prefix}` : copy.drawReveal.waitingFirstDigit}</strong>
+          <div className="draw-reveal-console">
+            <div className="draw-reveal-control-group draw-reveal-prize-control">
+              <span>{copy.drawReveal.selectPrize}</span>
+              <div className="draw-reveal-prize-tabs" role="tablist" aria-label={copy.drawReveal.selectPrize}>
+                {PRIZE_GROUPS.map((group) => {
+                  const drawn = prizeGroupProgress(group.id)
+                  return (
+                    <button
+                      className={activePrizeGroupId === group.id ? 'is-active' : ''}
+                      type="button"
+                      role="tab"
+                      aria-selected={activePrizeGroupId === group.id}
+                      key={group.id}
+                      onClick={() => {
+                        setSelectedPrizeGroupId(group.id)
+                        setBatchRevealCount(group.slotCount > 1 ? group.slotCount : 1)
+                      }}
+                    >
+                      <strong>{prizeLabels[group.id]}</strong>
+                      <small>
+                        {drawn}/{group.slotCount}
+                      </small>
+                    </button>
+                  )
+                })}
+              </div>
             </div>
 
-            {candidateSnapshot && (
-              <div className="draw-reveal-candidate-stats">
-                <span>
-                  <b>{compactNumber(candidateSnapshot.possibleTicketCount)}</b>
-                  {copy.drawReveal.possibleTickets}
-                </span>
-                <span>
-                  <b>{compactNumber(candidateSnapshot.possibleOwnerCount)}</b>
-                  {copy.drawReveal.possibleOwners}
-                </span>
-                <span>
-                  <b>
-                    {`#${formatDrawTicketNumber(candidateSnapshot.rangeStart, totalTickets)}-#${formatDrawTicketNumber(candidateSnapshot.rangeEnd, totalTickets)}`}
-                  </b>
-                  {copy.drawReveal.ticketWindow}
-                </span>
+            <div className="draw-reveal-control-group draw-reveal-method-control">
+              <span>{copy.drawReveal.drawMode}</span>
+              <div className="draw-reveal-mode-tabs">
+                <button className={effectiveDrawMode === 'single' ? 'is-active' : ''} type="button" onClick={() => setDrawMode('single')}>
+                  <Sparkles size={15} />
+                  {copy.drawReveal.singleDraw}
+                </button>
+                <button className={effectiveDrawMode === 'batch' ? 'is-active' : ''} type="button" onClick={() => setDrawMode('batch')} disabled={!selectedGroupCanBatch}>
+                  <FastForward size={15} />
+                  {copy.drawReveal.batchDraw}
+                </button>
               </div>
-            )}
+              {effectiveDrawMode === 'batch' && selectedGroupCanBatch && (
+                <label className="draw-reveal-batch-count">
+                  <span>{copy.drawReveal.batchCount}</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={Math.max(1, selectedRemainingSlotCount)}
+                    value={selectedBatchDrawCount}
+                    onChange={(event) => {
+                      const value = Number.parseInt(event.target.value, 10)
+                      const maxCount = Math.max(1, selectedRemainingSlotCount)
+                      const nextValue = Number.isFinite(value) ? Math.min(Math.max(1, value), maxCount) : 1
+                      setBatchRevealCount(nextValue)
+                    }}
+                  />
+                </label>
+              )}
+              {!selectedGroupCanBatch && <small className="draw-reveal-control-hint">{copy.drawReveal.grandSingleOnly}</small>}
+            </div>
+
+            <div className="draw-reveal-runner">
+              {isLiveRunMode && (
+                <div className="draw-reveal-contract-status">
+                  <span>{copy.drawReveal.contractStatus}</span>
+                  <strong>{liveContractStatus}</strong>
+                  <small>
+                    {copy.drawReveal.revealedCount}: {compactNumber(drawStatus?.winnerCount ?? revealedPrizeSlotIndexes.length)} / {compactNumber(TOTAL_PRIZE_DRAW_SLOTS)}
+                  </small>
+                </div>
+              )}
+              {runMode === 'showcase' && (
+                <button className="draw-reveal-run-secondary" type="button" onClick={resetDemo} disabled={isSequenceRunning || demoResults.length === 0}>
+                  {copy.drawReveal.resetShowcase}
+                </button>
+              )}
+            </div>
           </div>
 
-          {candidateSnapshot && leadCandidate ? (
-            <div className="draw-reveal-candidate-body">
-              <article className="draw-reveal-candidate-lead" style={candidateStrengthStyle(leadCandidate.matchingTickets)}>
-                <div className="draw-reveal-candidate-rank">{copy.drawReveal.topCandidate}</div>
-                <div className="draw-reveal-candidate-identity">
-                  <strong>{leadCandidate.displayName}</strong>
-                  <span title={leadCandidate.address}>{leadCandidate.address}</span>
-                </div>
-                <div className="draw-reveal-candidate-score">
-                  <b>{compactNumber(leadCandidate.matchingTickets)}</b>
-                  <span>{copy.drawReveal.possibleTickets}</span>
-                </div>
-                {leadCandidate.sampleTickets.length > 0 && (
-                  <div className="draw-reveal-ticket-chips" aria-label={copy.drawReveal.sampleTickets}>
-                    {leadCandidate.sampleTickets.slice(0, 6).map((ticket) => (
-                      <span key={ticket}>#{formatDrawTicketNumber(ticket, totalTickets)}</span>
-                    ))}
-                  </div>
-                )}
-              </article>
+          <div
+            className={`draw-reveal-stage draw-reveal-stage--${phase}${isBatchReveal ? ' draw-reveal-stage--batch' : ''}`}
+            role={canAdvanceRevealDigits ? 'button' : undefined}
+            tabIndex={canAdvanceRevealDigits ? 0 : undefined}
+            aria-label={canAdvanceRevealDigits ? copy.drawReveal.clickNext : undefined}
+            onClick={() => {
+              if (canAdvanceRevealDigits) {
+                setDigitRevealState((state) => ({
+                  ticketNumber,
+                  count: Math.min(ticketDigits.length, state.ticketNumber === ticketNumber ? state.count + 1 : 1),
+                }))
+              }
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return
+              event.preventDefault()
+              if (canAdvanceRevealDigits) {
+                setDigitRevealState((state) => ({
+                  ticketNumber,
+                  count: Math.min(ticketDigits.length, state.ticketNumber === ticketNumber ? state.count + 1 : 1),
+                }))
+              }
+            }}
+          >
+            <video
+              ref={videoRef}
+              className="draw-reveal-video"
+              src={DRAW_ANIMATION_SRC}
+              playsInline
+              preload="auto"
+              onLoadedData={(event) => updateVideoReadiness(event.currentTarget)}
+              onCanPlay={(event) => updateVideoReadiness(event.currentTarget)}
+              onCanPlayThrough={(event) => updateVideoReadiness(event.currentTarget)}
+              onError={markVideoLoadError}
+            />
 
-              {otherCandidates.length > 0 && (
-                <div className="draw-reveal-candidate-list">
-                  {otherCandidates.map((candidate, index) => (
-                    <article className="draw-reveal-candidate" key={candidate.address} style={candidateStrengthStyle(candidate.matchingTickets)}>
-                      <div className="draw-reveal-candidate-row">
-                        <span className="draw-reveal-candidate-index">#{index + 2}</span>
-                        <div className="draw-reveal-candidate-identity">
-                          <strong>{candidate.displayName}</strong>
-                          <span title={candidate.address}>{candidate.address}</span>
-                        </div>
-                        <small>
-                          {compactNumber(candidate.matchingTickets)}
-                          <span>{copy.drawReveal.possibleTickets}</span>
-                        </small>
+            <div className={`draw-reveal-result${isBatchReveal ? ' draw-reveal-result--batch' : ''}`} aria-live="polite">
+              {isBatchReveal ? (
+                <div className={`draw-reveal-batch-grid ${batchGridClassName}`}>
+                  {activeBatchReveal.map((result) => (
+                    <article className="draw-reveal-batch-ticket" key={`${result.source}-${result.slotIndex}-${result.ticket}`}>
+                      <img src={goldTicketImage} alt={copy.drawReveal.ticketAlt} decoding="async" />
+                      <div className="draw-reveal-batch-shine" aria-hidden="true" />
+                      <div className="draw-reveal-batch-number">
+                        <span>{`${prizeLabels[result.prizeGroupId]} #${result.prizeOrdinal}`}</span>
+                        <strong aria-label={`#${formatDrawTicketNumber(result.ticket, totalTickets)}`}>#{formatDrawTicketNumber(result.ticket, totalTickets)}</strong>
                       </div>
-                      {candidate.sampleTickets.length > 0 && (
-                        <div className="draw-reveal-ticket-chips" aria-label={copy.drawReveal.sampleTickets}>
-                          {candidate.sampleTickets.slice(0, 4).map((ticket) => (
-                            <span key={ticket}>#{formatDrawTicketNumber(ticket, totalTickets)}</span>
-                          ))}
-                        </div>
-                      )}
                     </article>
                   ))}
                 </div>
+              ) : (
+                <div className="draw-reveal-ticket">
+                  <img src={goldTicketImage} alt={copy.drawReveal.ticketAlt} decoding="async" />
+                  <div className="draw-reveal-shine" aria-hidden="true" />
+                  <div className="draw-reveal-number-wrap">
+                    <div className="draw-reveal-number-burst" aria-hidden="true" />
+                    <span>{statusLabel}</span>
+                    {hasTicketNumber ? (
+                      <strong aria-label={ticketAriaLabel}>
+                        {hasTicketNumber && <span className="draw-reveal-prefix">#</span>}
+                        {ticketDigits.map((digit, index) => (
+                          <span
+                            className={`draw-reveal-digit ${index < revealedDigitCount ? 'is-visible' : ''}`}
+                            data-digit-index={index}
+                            key={`${ticketNumber}-${index}`}
+                          >
+                            {digit}
+                          </span>
+                        ))}
+                      </strong>
+                    ) : (
+                      <div className="draw-reveal-ready-state" aria-label={ticketAriaLabel}>
+                        <strong>{stageReadyTitle}</strong>
+                        {stageReadyCopy && <small>{stageReadyCopy}</small>}
+                      </div>
+                    )}
+                    {hasTicketNumber && !isRevealComplete && (
+                      <small className="draw-reveal-click-cue">{copy.drawReveal.clickNext}</small>
+                    )}
+                  </div>
+                </div>
               )}
-            </div>
-          ) : (
-            <div className="draw-reveal-candidate-empty">
-              <div aria-hidden="true">
-                <span />
-                <span />
-                <span />
-                <span />
-                <span />
+
+              <div className="draw-reveal-meta">
+                <span>
+                  {copy.drawReveal.totalTickets}: {compactNumber(totalTickets)}
+                </span>
+                {statusCopy && <span>{statusCopy}</span>}
               </div>
-              <p>{copy.drawReveal.candidateHint}</p>
             </div>
+          </div>
+
+          {drawSequenceMessage && (
+            <p className={`draw-reveal-sequence-message${isLiveRunMode ? ' draw-reveal-sequence-message--live' : ''}`}>
+              {drawSequenceMessage}
+            </p>
           )}
-        </section>
+
+          {phase === 'reveal' && hasTicketNumber && !isBatchReveal && (
+            <section className={`draw-reveal-candidates ${candidateSnapshot ? 'draw-reveal-candidates--active' : 'draw-reveal-candidates--idle'}`} aria-live="polite">
+              <div className="draw-reveal-candidate-head">
+                <div>
+                  <span>{copy.drawReveal.candidateTitle}</span>
+                  <strong>{candidateSnapshot ? `#${candidateSnapshot.prefix}` : copy.drawReveal.waitingFirstDigit}</strong>
+                </div>
+
+                {candidateSnapshot && (
+                  <div className="draw-reveal-candidate-stats">
+                    <span>
+                      <b>{compactNumber(candidateSnapshot.possibleTicketCount)}</b>
+                      {copy.drawReveal.possibleTickets}
+                    </span>
+                    <span>
+                      <b>{compactNumber(candidateSnapshot.possibleOwnerCount)}</b>
+                      {copy.drawReveal.possibleOwners}
+                    </span>
+                    <span>
+                      <b>
+                        {`#${formatDrawTicketNumber(candidateSnapshot.rangeStart, totalTickets)}-#${formatDrawTicketNumber(candidateSnapshot.rangeEnd, totalTickets)}`}
+                      </b>
+                      {copy.drawReveal.ticketWindow}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {candidateSnapshot && leadCandidate ? (
+                <div className="draw-reveal-candidate-body">
+                  <article className="draw-reveal-candidate-lead" style={candidateStrengthStyle(leadCandidate.matchingTickets)}>
+                    <div className="draw-reveal-candidate-rank">{copy.drawReveal.topCandidate}</div>
+                    <div className="draw-reveal-candidate-identity">
+                      <strong>{leadCandidate.displayName}</strong>
+                      <span title={leadCandidate.address}>{leadCandidate.address}</span>
+                    </div>
+                    <div className="draw-reveal-candidate-score">
+                      <b>{compactNumber(leadCandidate.matchingTickets)}</b>
+                      <span>{copy.drawReveal.possibleTickets}</span>
+                    </div>
+                    {leadCandidate.sampleTickets.length > 0 && (
+                      <div className="draw-reveal-ticket-chips" aria-label={copy.drawReveal.sampleTickets}>
+                        {leadCandidate.sampleTickets.slice(0, 6).map((ticket) => (
+                          <span key={ticket}>#{formatDrawTicketNumber(ticket, totalTickets)}</span>
+                        ))}
+                      </div>
+                    )}
+                  </article>
+
+                  {otherCandidates.length > 0 && (
+                    <div className="draw-reveal-candidate-list">
+                      {otherCandidates.map((candidate, index) => (
+                        <article className="draw-reveal-candidate" key={candidate.address} style={candidateStrengthStyle(candidate.matchingTickets)}>
+                          <div className="draw-reveal-candidate-row">
+                            <span className="draw-reveal-candidate-index">#{index + 2}</span>
+                            <div className="draw-reveal-candidate-identity">
+                              <strong>{candidate.displayName}</strong>
+                              <span title={candidate.address}>{candidate.address}</span>
+                            </div>
+                            <small>
+                              {compactNumber(candidate.matchingTickets)}
+                              <span>{copy.drawReveal.possibleTickets}</span>
+                            </small>
+                          </div>
+                          {candidate.sampleTickets.length > 0 && (
+                            <div className="draw-reveal-ticket-chips" aria-label={copy.drawReveal.sampleTickets}>
+                              {candidate.sampleTickets.slice(0, 4).map((ticket) => (
+                                <span key={ticket}>#{formatDrawTicketNumber(ticket, totalTickets)}</span>
+                              ))}
+                            </div>
+                          )}
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="draw-reveal-candidate-empty">
+                  <div aria-hidden="true">
+                    <span />
+                    <span />
+                    <span />
+                    <span />
+                    <span />
+                  </div>
+                  <p>{copy.drawReveal.candidateHint}</p>
+                </div>
+              )}
+            </section>
+          )}
+        </>
       )}
 
       <section className={`draw-winner-board ${isAllComplete ? 'is-complete' : ''}${selectedWinnerResult ? ' has-detail' : ''}`} aria-live="polite">
