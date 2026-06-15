@@ -209,7 +209,6 @@ export function DrawReveal({
   const [currentReveal, setCurrentReveal] = useState<DrawWinnerResult | null>(null)
   const [currentBatchReveal, setCurrentBatchReveal] = useState<DrawWinnerResult[]>([])
   const [selectedWinnerResult, setSelectedWinnerResult] = useState<DrawWinnerResult | null>(null)
-  const [selectedWinnerCardIndex, setSelectedWinnerCardIndex] = useState(0)
   const [isSequenceRunning, setIsSequenceRunning] = useState(false)
   const [sequenceMessage, setSequenceMessage] = useState('')
   const [videoReady, setVideoReady] = useState(false)
@@ -432,41 +431,17 @@ export function DrawReveal({
     return result.owner?.identity ?? null
   }
 
-  function reserveOwnerName(result: DrawReserveResult) {
-    return result.owner?.displayName ?? copy.drawReveal.unknownWinner
-  }
-
-  function reserveOwnerAddress(result: DrawReserveResult) {
-    return result.owner?.address ?? copy.drawReveal.noWalletName
-  }
-
-  function reserveOwnerIdentity(result: DrawReserveResult) {
-    return result.owner?.identity ?? null
-  }
-
-  function winnerStackCards(result: DrawWinnerResult): WinnerStackCard[] {
-    return [
-      {
-        address: ownerAddress(result),
-        identity: ownerIdentity(result),
-        kind: 'primary',
-        label: copy.drawReveal.primaryWinner,
-        name: ownerName(result),
-        prize: prizeRewards[result.prizeGroupId],
-        slotIndex: result.slotIndex,
-        ticket: result.ticket,
-      },
-      ...result.reserves.map((reserve) => ({
-        address: reserveOwnerAddress(reserve),
-        identity: reserveOwnerIdentity(reserve),
-        kind: 'reserve' as const,
-        label: `${copy.drawReveal.reserveWinner} #${reserve.reserveRank}`,
-        name: reserveOwnerName(reserve),
-        prize: prizeRewards[result.prizeGroupId],
-        slotIndex: result.slotIndex,
-        ticket: reserve.ticket,
-      })),
-    ]
+  function winnerPrimaryCard(result: DrawWinnerResult): WinnerStackCard {
+    return {
+      address: ownerAddress(result),
+      identity: ownerIdentity(result),
+      kind: 'primary',
+      label: copy.drawReveal.primaryWinner,
+      name: ownerName(result),
+      prize: prizeRewards[result.prizeGroupId],
+      slotIndex: result.slotIndex,
+      ticket: result.ticket,
+    }
   }
 
   const centerRevealStage = useCallback(() => {
@@ -1229,15 +1204,7 @@ export function DrawReveal({
     }
   }, [selectedWinnerResult])
 
-  const selectedWinnerCards = selectedWinnerResult ? winnerStackCards(selectedWinnerResult) : []
-  const selectedWinnerCardSafeIndex = selectedWinnerCards.length ? selectedWinnerCardIndex % selectedWinnerCards.length : 0
-  const selectedWinnerCard = selectedWinnerCards[selectedWinnerCardSafeIndex] ?? null
-  const canCycleWinnerCards = selectedWinnerCards.length > 1
-
-  function selectWinnerCardIndex(nextIndex: number) {
-    if (!selectedWinnerCards.length) return
-    setSelectedWinnerCardIndex((nextIndex + selectedWinnerCards.length) % selectedWinnerCards.length)
-  }
+  const selectedWinnerCard = selectedWinnerResult ? winnerPrimaryCard(selectedWinnerResult) : null
 
   return (
     <section className={`panel draw-reveal-panel${isWinnerListOnly ? ' draw-reveal-panel--winner-list' : ''}`} ref={rootRef}>
@@ -1576,7 +1543,7 @@ export function DrawReveal({
               if (event.currentTarget === event.target) setSelectedWinnerResult(null)
             }}
           >
-            <section className="draw-winner-detail-panel" aria-label={copy.drawReveal.reserveList}>
+            <section className="draw-winner-detail-panel" aria-label={copy.drawReveal.primaryWinner}>
               <button className="draw-winner-detail-close" type="button" onClick={() => setSelectedWinnerResult(null)} aria-label={copy.drawReveal.closeWinnerStack}>
                 <X size={18} />
               </button>
@@ -1600,31 +1567,6 @@ export function DrawReveal({
                   </div>
                 </article>
 
-                <div className="draw-winner-reserve-controls">
-                  <button type="button" onClick={() => selectWinnerCardIndex(selectedWinnerCardSafeIndex - 1)} disabled={!canCycleWinnerCards}>
-                    {copy.drawReveal.previousWinnerCard}
-                  </button>
-                  <span>
-                    {copy.drawReveal.winnerStackPosition} {selectedWinnerCardSafeIndex + 1} / {selectedWinnerCards.length}
-                  </span>
-                  <button type="button" onClick={() => selectWinnerCardIndex(selectedWinnerCardSafeIndex + 1)} disabled={!canCycleWinnerCards}>
-                    {copy.drawReveal.nextWinnerCard}
-                  </button>
-                </div>
-
-                <div className="draw-winner-reserve-rail">
-                  {selectedWinnerCards.map((card, index) => (
-                    <button
-                      className={index === selectedWinnerCardSafeIndex ? 'is-active' : ''}
-                      key={`${card.kind}-${card.ticket}`}
-                      onClick={() => selectWinnerCardIndex(index)}
-                      type="button"
-                    >
-                      <span>{card.label}</span>
-                      <strong>#{formatDrawTicketNumber(card.ticket, totalTickets)}</strong>
-                    </button>
-                  ))}
-                </div>
               </div>
             </section>
           </div>
@@ -1648,7 +1590,6 @@ export function DrawReveal({
                         className="draw-winner-card"
                         key={`${result.source}-${result.slotIndex}-${result.ticket.toString()}`}
                         onClick={() => {
-                          setSelectedWinnerCardIndex(0)
                           setSelectedWinnerResult(result)
                         }}
                         type="button"

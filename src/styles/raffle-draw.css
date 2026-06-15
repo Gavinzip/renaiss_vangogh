@@ -1045,6 +1045,11 @@
   white-space: nowrap;
 }
 
+.page-draw .ledger-download-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
 .page-draw .draw-reveal-demo,
 .page-draw .draw-reveal-replay {
   min-height: 40px;

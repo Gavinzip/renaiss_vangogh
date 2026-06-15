@@ -226,6 +226,11 @@ const EN_COPY = {
     ledgerDownloadTitle: 'Download the complete ledger',
     ledgerDownloadCopy: 'Anyone can download the locked JSON ledger and compare the total ticket count, ledger hash, and ticket ranges used for winner matching.',
     downloadLedger: 'Download ledger',
+    winnerExportEyebrow: 'Winner export',
+    winnerExportTitle: 'Export winner list',
+    winnerExportCopy: 'Download a plain text winner list with name, X, Discord, and wallet address for every primary winner.',
+    exportWinnerList: 'Export winner list',
+    winnerExportEmpty: 'No winners to export',
   },
   simulation: {
     eyebrow: 'Simulation',
@@ -663,6 +668,11 @@ export const COPY: Record<LanguageCode, AppCopy> = {
       ledgerDownloadTitle: '下載完整帳本',
       ledgerDownloadCopy: '任何人都可以下載鎖定後的 JSON 帳本，核對總票數、帳本 Hash，以及用來對應中獎者的票號區間。',
       downloadLedger: '下載帳本',
+      winnerExportEyebrow: '中獎名單',
+      winnerExportTitle: '匯出中獎名單',
+      winnerExportCopy: '下載純文字中獎名單，每位正選得獎者包含名稱、X、Discord 與錢包地址。',
+      exportWinnerList: '匯出中獎名單',
+      winnerExportEmpty: '尚無可匯出的得獎者',
     },
     simulation: {
       ...EN_COPY.simulation,

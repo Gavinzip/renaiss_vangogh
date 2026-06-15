@@ -10,6 +10,7 @@ export type AnalyticsEventName =
   | 'draw_request'
   | 'draw_reset'
   | 'draw_run_mode_change'
+  | 'download_winner_list'
   | 'draw_status_read'
   | 'hidden_draw_unlock'
   | 'language_change'

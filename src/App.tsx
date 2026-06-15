@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Download, Loader2, LogOut, ShieldCheck, Trophy } from 'lucide-react'
 import './App.css'
 import './styles/raffle-foundation.css'
@@ -59,6 +59,7 @@ import {
   type DrawChainEventHistory,
 } from './lib/wallet/drawEventHistory'
 import { TOTAL_PRIZE_DRAW_SLOTS } from './lib/draw/prizeSlots'
+import { findWinnerCandidate } from './lib/ticketing/winnerCandidates'
 
 type PageKey = 'tickets' | 'rules' | 'simulator' | 'draw'
 type DrawEventHistoryStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -93,6 +94,8 @@ const EMPTY_LEDGER_HASH = `0x${'0'.repeat(64)}`
 const DRAW_MAINNET_ONLY_START_AT = '2026-06-15T00:00:00+08:00'
 const DRAW_MAINNET_ONLY_START_MS = Date.parse(DRAW_MAINNET_ONLY_START_AT)
 const DRAW_WINNER_LIST_ONLY = true
+const EMPTY_WINNER_TICKETS: bigint[] = []
+const EMPTY_RESERVE_TICKETS: bigint[][] = []
 
 const PUBLIC_NAV_ITEMS: PageKey[] = ['tickets', 'rules', 'simulator', 'draw']
 type DrawBusyState = 'connect' | 'read' | 'reset' | 'finalize' | 'draw' | 'drawNext' | null
@@ -137,6 +140,50 @@ function readMainnetOnlyDrawMode() {
 
 function createTransactionId(kind: DrawTransactionKind): string {
   return `${kind}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function cleanExportTwitterHandle(value: string | null | undefined) {
+  return String(value || '').trim().replace(/^@+/, '')
+}
+
+function buildWinnerListExportText({
+  identities,
+  ledger,
+  noWalletName,
+  notConnected,
+  unknownWinner,
+  winnerTicketsBySlot,
+}: {
+  identities: WalletIdentityMap
+  ledger: RaffleLedger
+  noWalletName: string
+  notConnected: string
+  unknownWinner: string
+  winnerTicketsBySlot: bigint[]
+}) {
+  const blocks: string[] = []
+
+  for (let slotIndex = 0; slotIndex < TOTAL_PRIZE_DRAW_SLOTS; slotIndex += 1) {
+    const winnerTicket = winnerTicketsBySlot[slotIndex]
+    if (!winnerTicket || winnerTicket <= 0n) continue
+
+    const owner = findWinnerCandidate({
+      identities,
+      ledger,
+      winnerTicket,
+    })
+    const twitter = cleanExportTwitterHandle(owner?.identity?.linkedTwitter)
+    const discord = String(owner?.identity?.linkedDiscord || '').trim()
+
+    blocks.push([
+      owner?.identity?.username || owner?.displayName || owner?.address || unknownWinner,
+      twitter ? `X @${twitter}` : `X ${notConnected}`,
+      discord ? `Discord ${discord}` : `Discord ${notConnected}`,
+      owner?.address || noWalletName,
+    ].join('\n'))
+  }
+
+  return blocks.length ? `${blocks.join('\n\n')}\n` : ''
 }
 
 function PageHeader({
@@ -319,9 +366,24 @@ export default function App() {
   const activeDrawNetworkKey: DrawNetworkKey = isDrawNetworkKey(drawRunMode) ? drawRunMode : 'mainnet'
   const activeDrawNetwork = DRAW_NETWORKS[activeDrawNetworkKey]
   const activeStoredDrawStatus = drawStatusByNetwork[activeDrawNetworkKey] ?? null
-  const activeWinnerTicketsBySlot = activeStoredDrawStatus?.winnerTicketsBySlot ?? []
-  const activeReserveTicketsBySlot = activeStoredDrawStatus?.reserveTicketsBySlot ?? []
-  const activeRevealedPrizeSlots = activeStoredDrawStatus?.revealedPrizeSlots ?? []
+  const activeWinnerTicketsBySlot = activeStoredDrawStatus?.winnerTicketsBySlot ?? EMPTY_WINNER_TICKETS
+  const activeReserveTicketsBySlot = activeStoredDrawStatus?.reserveTicketsBySlot ?? EMPTY_RESERVE_TICKETS
+  const activeRevealedPrizeSlots = activeStoredDrawStatus?.revealedPrizeSlots ?? EMPTY_WINNER_TICKETS
+  const winnerListExportText = useMemo(
+    () =>
+      currentFullLedger
+        ? buildWinnerListExportText({
+          identities: walletIdentities,
+          ledger: currentFullLedger,
+          noWalletName: copy.drawReveal.noWalletName,
+          notConnected: copy.drawReveal.notConnected,
+          unknownWinner: copy.drawReveal.unknownWinner,
+          winnerTicketsBySlot: activeWinnerTicketsBySlot,
+        })
+        : '',
+    [activeWinnerTicketsBySlot, copy.drawReveal.noWalletName, copy.drawReveal.notConnected, copy.drawReveal.unknownWinner, currentFullLedger, walletIdentities],
+  )
+  const winnerListExportCount = winnerListExportText ? winnerListExportText.trim().split(/\n{2,}/).length : 0
   const activeDrawStatus = activeStoredDrawStatus
   const activeDrawLedgerHash = activeDrawStatus?.ledgerHash ?? ''
   const activeDrawTxRecords = visibleDrawTransactionRecords(
@@ -695,6 +757,23 @@ export default function App() {
     setLanguage(nextLanguage)
     trackEvent('language_change', {
       language: nextLanguage,
+    })
+  }
+
+  function handleDownloadWinnerList() {
+    if (!winnerListExportText) return
+
+    const blob = new Blob([winnerListExportText], { type: 'text/plain;charset=utf-8' })
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'renaiss-lucky-draw-winners.txt'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.URL.revokeObjectURL(url)
+    trackEvent('download_winner_list', {
+      count: winnerListExportCount,
     })
   }
 
@@ -1669,6 +1748,17 @@ export default function App() {
                   <Download size={18} />
                   <span>{copy.draw.downloadLedger}</span>
                 </a>
+              </section>
+              <section className="panel ledger-download-panel winner-export-panel">
+                <div>
+                  <span className="eyebrow">{copy.draw.winnerExportEyebrow}</span>
+                  <h2>{copy.draw.winnerExportTitle}</h2>
+                  <p>{copy.draw.winnerExportCopy}</p>
+                </div>
+                <button className="icon-button ledger-download-button" type="button" onClick={handleDownloadWinnerList} disabled={!winnerListExportText}>
+                  <Download size={18} />
+                  <span>{winnerListExportText ? `${copy.draw.exportWinnerList} (${winnerListExportCount})` : copy.draw.winnerExportEmpty}</span>
+                </button>
               </section>
               <WalletPanel
                 network={activeDrawNetwork}
