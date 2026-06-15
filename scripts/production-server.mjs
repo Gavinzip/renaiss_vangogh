@@ -16,14 +16,23 @@ import {
   readLedgerPayload,
 } from './raffle-ledger-api.mjs'
 import { readIdentityIndex, resolveIdentityQuery, suggestIdentityQueries } from './identity-lookup.mjs'
+import {
+  DrawEventHistoryConfigError,
+  drawEventBscscanConfigForNetwork,
+  drawEventNetworkForKey,
+  fetchDrawEventHistory,
+} from './lucky-draw/draw-event-history.mjs'
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const distDir = resolve(repoRoot, 'dist')
+const publicIdentityLookupPath = fileURLToPath(new URL('../public/lucky-draw-identities.json', import.meta.url))
+const distIdentityLookupPath = join(distDir, 'lucky-draw-identities.json')
 const dataDir = process.env.LUCKY_DRAW_DATA_DIR || '/data/lucky-draw'
 const cacheDir = process.env.LUCKY_DRAW_CACHE_DIR || join(dataDir, 'cache')
 const ledgerPath = process.env.LUCKY_DRAW_LEDGER_PATH || join(dataDir, 'lucky-draw-ledger.json')
 const identityLookupPath =
-  process.env.LUCKY_DRAW_IDENTITY_LOOKUP_PATH || fileURLToPath(new URL('../public/lucky-draw-identities.json', import.meta.url))
+  process.env.LUCKY_DRAW_IDENTITY_LOOKUP_PATH ||
+  (existsSync(publicIdentityLookupPath) ? publicIdentityLookupPath : distIdentityLookupPath)
 const snapshotDir = process.env.LUCKY_DRAW_SNAPSHOT_DIR || join(dataDir, 'snapshots')
 const snapshotKeep = readIntegerEnv('LUCKY_DRAW_SNAPSHOT_KEEP', 72, 1)
 const port = Number(process.env.PORT || 3000)
@@ -443,7 +452,7 @@ function runLedgerRefresh(trigger) {
   })
 }
 
-const server = createServer((request, response) => {
+const server = createServer(async (request, response) => {
   const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`)
   if (url.pathname === '/health') {
     response.writeHead(200, {
@@ -570,6 +579,52 @@ const server = createServer((request, response) => {
       )
     } catch (error) {
       sendLedgerApiError(request, response, error)
+    }
+    return
+  }
+
+  if (url.pathname === '/api/draw-events') {
+    const networkKey = url.searchParams.get('network') || 'testnet'
+    const network = drawEventNetworkForKey(networkKey)
+    if (!network) {
+      sendJson(
+        request,
+        response,
+        400,
+        {
+          error: 'network must be testnet or mainnet',
+        },
+        {
+          'cache-control': 'no-store',
+          'access-control-allow-origin': '*',
+        },
+      )
+      return
+    }
+
+    try {
+      const history = await fetchDrawEventHistory({
+        network,
+        ledgerHash: url.searchParams.get('ledgerHash') || '',
+        bscscanConfig: drawEventBscscanConfigForNetwork(network),
+      })
+      sendJson(request, response, 200, history, {
+        'cache-control': 'no-store',
+        'access-control-allow-origin': '*',
+      })
+    } catch (error) {
+      sendJson(
+        request,
+        response,
+        error instanceof DrawEventHistoryConfigError ? 503 : 500,
+        {
+          error: error instanceof Error ? error.message : 'Could not load on-chain draw event history.',
+        },
+        {
+          'cache-control': 'no-store',
+          'access-control-allow-origin': '*',
+        },
+      )
     }
     return
   }

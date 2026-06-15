@@ -27,6 +27,7 @@ export const luckyDrawAbi = [
   'function reserveCountForPrizeSlot(uint256 prizeSlotIndex) external view returns (uint256)',
   'function reserveTicketsBySlot(uint256 prizeSlotIndex) external view returns (uint256[] memory)',
   'function reserveTicketBySlot(uint256 prizeSlotIndex, uint256 reserveIndex) external view returns (uint256)',
+  'event LedgerFinalized(bytes32 indexed ledgerHash, uint256 totalTickets, uint256 prizeSlotCount, string ledgerUri)',
   'event DrawRequested(uint256 indexed requestId, address indexed caller)',
   'event RandomnessFulfilled(uint256 indexed requestId, uint256 randomWord)',
   'event DrawAdminChanged(address indexed admin, bool allowed)',
@@ -34,4 +35,5 @@ export const luckyDrawAbi = [
   'event PrizeWinnerDrawn(uint256 indexed revealIndex, uint256 indexed prizeSlotIndex, uint256 ticketNumber)',
   'event PrizeReserveWinnerDrawn(uint256 indexed revealIndex, uint256 indexed prizeSlotIndex, uint256 indexed reserveIndex, uint256 ticketNumber)',
   'event DrawFulfilled(uint256 indexed requestId, uint256 randomWord, uint256[] winnerTickets)',
+  'event RoundReset()',
 ] as const

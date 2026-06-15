@@ -1011,6 +1011,17 @@
   font-weight: 760;
 }
 
+.page-draw .draw-transaction-note {
+  margin: 0;
+  padding: 0.68rem 0.8rem;
+  border: 1px solid rgba(156, 99, 9, 0.18);
+  border-radius: 14px;
+  background: rgba(255, 247, 226, 0.74);
+  color: #7a5612;
+  font-size: 0.82rem;
+  font-weight: 760;
+}
+
 .page-draw .ledger-download-panel {
   grid-column: 1 / -1;
 }

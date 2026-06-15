@@ -6,6 +6,8 @@ export type DrawTransactionStatus = 'awaiting-signature' | 'pending' | 'confirme
 export interface DrawTransactionRecord {
   id: string
   networkKey: DrawNetworkKey
+  contractAddress?: string
+  ledgerHash?: string
   kind: DrawTransactionKind
   status: DrawTransactionStatus
   startedAt: number

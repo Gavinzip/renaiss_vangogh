@@ -54,9 +54,21 @@ import {
   subscribeWalletProviders,
   type WalletProviderOption,
 } from './lib/wallet/providers'
+import {
+  loadDrawEventHistory,
+  type DrawChainEventHistory,
+} from './lib/wallet/drawEventHistory'
 import { TOTAL_PRIZE_DRAW_SLOTS } from './lib/draw/prizeSlots'
 
 type PageKey = 'tickets' | 'rules' | 'simulator' | 'draw'
+type DrawEventHistoryStatus = 'idle' | 'loading' | 'ready' | 'error'
+
+interface DrawEventHistoryState {
+  key: string
+  status: DrawEventHistoryStatus
+  history: DrawChainEventHistory | null
+  error: string
+}
 
 const ContractDetails = lazy(() => import('./components/ContractDetails').then((module) => ({ default: module.ContractDetails })))
 const DrawAdminPanel = lazy(() => import('./components/DrawAdminPanel').then((module) => ({ default: module.DrawAdminPanel })))
@@ -200,6 +212,54 @@ function draftDrawStatusFrom(status: DrawStatus): DrawStatus {
   })
 }
 
+function drawStatusMatchesLedger(status: DrawStatus | null | undefined, ledger: RaffleLedger | null | undefined) {
+  if (!status || !ledger?.ledgerHash) return false
+  return (
+    status.totalTickets === BigInt(ledger.totalFinalTickets) &&
+    status.prizeSlotCount === BigInt(TOTAL_PRIZE_DRAW_SLOTS) &&
+    status.ledgerHash.toLowerCase() === ledger.ledgerHash.toLowerCase()
+  )
+}
+
+function drawStatusHasLedgerMismatch(status: DrawStatus | null | undefined, ledger: RaffleLedger | null | undefined) {
+  return Boolean(status?.finalized && ledger && !drawStatusMatchesLedger(status, ledger))
+}
+
+function visibleDrawTransactionRecords(
+  records: DrawTransactionRecord[],
+  contractAddress: string,
+  ledgerHash: string | null | undefined,
+) {
+  const currentContractAddress = contractAddress.toLowerCase()
+  const currentLedgerHash = ledgerHash?.toLowerCase() ?? ''
+  return records.filter((record) => {
+    if (!record.contractAddress || record.contractAddress.toLowerCase() !== currentContractAddress) return false
+    if (!record.ledgerHash) return false
+
+    const recordLedgerHash = record.ledgerHash.toLowerCase()
+    if (!currentLedgerHash || currentLedgerHash === EMPTY_LEDGER_HASH) {
+      return recordLedgerHash === EMPTY_LEDGER_HASH || record.kind === 'reset'
+    }
+
+    return recordLedgerHash === currentLedgerHash
+  })
+}
+
+function drawEventHistoryKey(
+  networkKey: DrawNetworkKey,
+  contractAddress: string,
+  status: DrawStatus | null | undefined,
+) {
+  if (!status?.finalized || !status.ledgerHash || status.ledgerHash === EMPTY_LEDGER_HASH) return ''
+  return [
+    networkKey,
+    contractAddress.toLowerCase(),
+    status.ledgerHash.toLowerCase(),
+    status.winnerCount.toString(),
+    String(status.state),
+  ].join(':')
+}
+
 function pageFromHash(hash: string): PageKey | null {
   const key = hash.replace(/^#/, '')
   return PUBLIC_NAV_ITEMS.includes(key as PageKey) || key === 'draw' ? (key as PageKey) : null
@@ -224,6 +284,7 @@ export default function App() {
   const [drawStatusByNetwork, setDrawStatusByNetwork] = useState<Partial<Record<DrawNetworkKey, DrawStatus>>>({})
   const [drawTxRecordsByNetwork, setDrawTxRecordsByNetwork] = useState<DrawTransactionRecordsByNetwork>(() => readStoredDrawTransactions())
   const [drawVrfTimingByNetwork, setDrawVrfTimingByNetwork] = useState<DrawVrfTimingByNetwork>({})
+  const [drawEventHistoryByNetwork, setDrawEventHistoryByNetwork] = useState<Partial<Record<DrawNetworkKey, DrawEventHistoryState>>>({})
   const [drawMessage, setDrawMessage] = useState('')
   const [drawBusy, setDrawBusy] = useState<DrawBusyState>(null)
   const [walletIdentities, setWalletIdentities] = useState<WalletIdentityMap>({})
@@ -242,6 +303,7 @@ export default function App() {
   const [initialLoaderMounted, setInitialLoaderMounted] = useState(true)
   const [initialLoaderStartedAt] = useState(() => Date.now())
   const drawUnlockHitsRef = useRef(0)
+  const drawEventHistoryRequestKeyRef = useRef('')
   const entryRequestRef = useRef(0)
   const fullLedgerPreloadKeyRef = useRef('')
   const copy = COPY[language]
@@ -259,19 +321,21 @@ export default function App() {
   const activeReserveTicketsBySlot = activeStoredDrawStatus?.reserveTicketsBySlot ?? []
   const activeRevealedPrizeSlots = activeStoredDrawStatus?.revealedPrizeSlots ?? []
   const activeDrawStatus = activeStoredDrawStatus
-  const activeDrawTxRecords = drawTxRecordsByNetwork[activeDrawNetworkKey] ?? []
+  const activeDrawLedgerHash = activeDrawStatus?.ledgerHash ?? ''
+  const activeDrawTxRecords = visibleDrawTransactionRecords(
+    drawTxRecordsByNetwork[activeDrawNetworkKey] ?? [],
+    activeDrawNetwork.contractAddress,
+    activeDrawLedgerHash,
+  )
+  const activeDrawEventHistoryKey = drawEventHistoryKey(activeDrawNetworkKey, activeDrawNetwork.contractAddress, activeDrawStatus)
+  const activeDrawEventHistoryState = drawEventHistoryByNetwork[activeDrawNetworkKey]
+  const activeDrawEventHistory =
+    activeDrawEventHistoryState?.key === activeDrawEventHistoryKey ? activeDrawEventHistoryState : null
   const activeDrawVrfTiming = drawVrfTimingByNetwork[activeDrawNetworkKey] ?? null
   const isActiveContractOwner = sameAddress(wallet?.address, activeDrawStatus?.ownerAddress)
   const isActiveAuthorizedOperator = isWalletDrawAdmin(wallet, activeDrawStatus)
   const activeLedgerForContractCheck = currentFullLedger ?? ledger
-  const isActiveContractLedgerMismatch = Boolean(
-    activeDrawStatus &&
-      activeDrawStatus.finalized &&
-      activeLedgerForContractCheck &&
-      (activeDrawStatus.totalTickets !== BigInt(activeLedgerForContractCheck.totalFinalTickets) ||
-        activeDrawStatus.prizeSlotCount !== BigInt(TOTAL_PRIZE_DRAW_SLOTS) ||
-        (activeLedgerForContractCheck.ledgerHash && activeDrawStatus.ledgerHash.toLowerCase() !== activeLedgerForContractCheck.ledgerHash.toLowerCase())),
-  )
+  const isActiveContractLedgerMismatch = drawStatusHasLedgerMismatch(activeDrawStatus, activeLedgerForContractCheck)
 
   useEffect(() => subscribeWalletProviders(setWalletProviderOptions), [])
 
@@ -356,6 +420,62 @@ export default function App() {
       // Transaction links are still shown in memory if localStorage is unavailable.
     }
   }, [drawTxRecordsByNetwork])
+
+  useEffect(() => {
+    if (activePage !== 'draw' || !activeDrawEventHistoryKey || !activeDrawLedgerHash) return undefined
+    if (drawEventHistoryRequestKeyRef.current === activeDrawEventHistoryKey) return undefined
+    drawEventHistoryRequestKeyRef.current = activeDrawEventHistoryKey
+
+    let alive = true
+    let finished = false
+    setDrawEventHistoryByNetwork((current) => ({
+      ...current,
+      [activeDrawNetworkKey]: {
+        key: activeDrawEventHistoryKey,
+        status: 'loading',
+        history: null,
+        error: '',
+      },
+    }))
+
+    void loadDrawEventHistory({
+      networkKey: activeDrawNetworkKey,
+      ledgerHash: activeDrawLedgerHash,
+    })
+      .then((history) => {
+        finished = true
+        if (!alive) return
+        setDrawEventHistoryByNetwork((current) => ({
+          ...current,
+          [activeDrawNetworkKey]: {
+            key: activeDrawEventHistoryKey,
+            status: 'ready',
+            history,
+            error: '',
+          },
+        }))
+      })
+      .catch((error) => {
+        finished = true
+        if (!alive) return
+        setDrawEventHistoryByNetwork((current) => ({
+          ...current,
+          [activeDrawNetworkKey]: {
+            key: activeDrawEventHistoryKey,
+            status: 'error',
+            history: null,
+            error: error instanceof Error ? error.message : 'Could not load on-chain draw event history.',
+          },
+        }))
+      })
+
+    return () => {
+      alive = false
+      if (!finished && drawEventHistoryRequestKeyRef.current === activeDrawEventHistoryKey) {
+        drawEventHistoryRequestKeyRef.current = ''
+      }
+    }
+  }, [activeDrawEventHistoryKey, activeDrawLedgerHash, activeDrawNetworkKey, activePage])
 
   useEffect(() => {
     initializeAnalytics()
@@ -627,13 +747,21 @@ export default function App() {
     return copy.walletPanel.drawNext
   }
 
-  function beginDrawTransaction(networkKey: DrawNetworkKey, kind: DrawTransactionKind, detail?: string) {
+  function beginDrawTransaction(
+    networkKey: DrawNetworkKey,
+    kind: DrawTransactionKind,
+    detail?: string,
+    scope?: { ledgerHash?: string },
+  ) {
     const id = createTransactionId(kind)
     const startedAt = Date.now()
     const label = drawTransactionKindLabel(kind)
+    const network = DRAW_NETWORKS[networkKey]
     const initialRecord: DrawTransactionRecord = {
       id,
       networkKey,
+      contractAddress: network.contractAddress,
+      ledgerHash: scope?.ledgerHash ?? drawStatusByNetwork[networkKey]?.ledgerHash ?? EMPTY_LEDGER_HASH,
       kind,
       status: 'awaiting-signature',
       startedAt,
@@ -979,7 +1107,7 @@ export default function App() {
       network: networkKey,
       status: 'start',
     })
-    const transaction = beginDrawTransaction(networkKey, 'reset')
+    const transaction = beginDrawTransaction(networkKey, 'reset', undefined, { ledgerHash: EMPTY_LEDGER_HASH })
     const signerProvider = wallet.injectedProvider ?? wallet.provider
     try {
       const hash = await resetContractDraft(signerProvider, network.contractAddress, networkKey, transaction.submit)
@@ -1046,7 +1174,7 @@ export default function App() {
       network: networkKey,
       status: 'start',
     })
-    const transaction = beginDrawTransaction(networkKey, 'finalize')
+    const transaction = beginDrawTransaction(networkKey, 'finalize', undefined, { ledgerHash: ledgerHashForDraw })
     const signerProvider = wallet.injectedProvider ?? wallet.provider
     try {
       const hash = await finalizeContractLedger(
@@ -1121,13 +1249,21 @@ export default function App() {
       })
       return
     }
+    if (drawStatusHasLedgerMismatch(currentStatus, currentFullLedger ?? ledger)) {
+      setDrawMessage(copy.walletPanel.contractTotalMismatch)
+      trackEvent('draw_request', {
+        network: networkKey,
+        status: 'blocked_ledger_mismatch',
+      })
+      return
+    }
     setDrawBusy('draw')
     setDrawMessage('')
     trackEvent('draw_request', {
       network: networkKey,
       status: 'start',
     })
-    const transaction = beginDrawTransaction(networkKey, 'request')
+    const transaction = beginDrawTransaction(networkKey, 'request', undefined, { ledgerHash: currentStatus.ledgerHash })
     const signerProvider = wallet.injectedProvider ?? wallet.provider
     try {
       const hash = await requestContractDraw(signerProvider, network.contractAddress, networkKey, transaction.submit)
@@ -1184,6 +1320,16 @@ export default function App() {
         requested_count: prizeSlotIndexes.length,
         prize_slot_indexes: prizeSlotIndexes.join(','),
         status: 'blocked_vrf_config_error',
+      })
+      return []
+    }
+    if (drawStatusHasLedgerMismatch(currentStatus, currentFullLedger ?? ledger)) {
+      setDrawMessage(copy.walletPanel.contractTotalMismatch)
+      trackEvent('draw_next', {
+        network: networkKey,
+        requested_count: prizeSlotIndexes.length,
+        prize_slot_indexes: prizeSlotIndexes.join(','),
+        status: 'blocked_ledger_mismatch',
       })
       return []
     }
@@ -1249,7 +1395,12 @@ export default function App() {
       prize_slot_indexes: safePrizeSlotIndexes.join(','),
       status: 'start',
     })
-    const transaction = beginDrawTransaction(networkKey, 'reveal', safePrizeSlotIndexes.map((slotIndex) => `#${slotIndex + 1}`).join(', '))
+    const transaction = beginDrawTransaction(
+      networkKey,
+      'reveal',
+      safePrizeSlotIndexes.map((slotIndex) => `${copy.drawReveal.slotLabel} #${slotIndex + 1}`).join(', '),
+      { ledgerHash: currentStatus.ledgerHash },
+    )
     const signerProvider = wallet.injectedProvider ?? wallet.provider
     try {
       const hash = currentStatus.supportsSelectablePrizeSlots
@@ -1507,7 +1658,14 @@ export default function App() {
                 onRequestDraw={() => requestDrawRound(activeDrawNetworkKey)}
                 onDrawContractPrizeSlots={(prizeSlotIndexes) => drawContractPrizeSlots(prizeSlotIndexes, activeDrawNetworkKey)}
               />
-              <DrawTransactionTimeline network={activeDrawNetwork} records={activeDrawTxRecords} copy={copy} />
+              <DrawTransactionTimeline
+                network={activeDrawNetwork}
+                records={activeDrawTxRecords}
+                chainTransactions={activeDrawEventHistory?.history?.transactions ?? []}
+                chainStatus={activeDrawEventHistoryKey ? activeDrawEventHistory?.status ?? 'loading' : 'idle'}
+                chainError={activeDrawEventHistory?.error ?? ''}
+                copy={copy}
+              />
               <section className="panel ledger-download-panel">
                 <div>
                   <span className="eyebrow">{copy.draw.ledgerDownloadEyebrow}</span>
