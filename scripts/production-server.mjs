@@ -7,12 +7,14 @@ import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { createGzip } from 'node:zlib'
 import {
+  buildDrawWinnerLookupLedger,
   buildLedgerEntryResponse,
   buildLedgerSummary,
   buildParticipantIdentities,
   findLedgerEntry,
   findLedgerEntryByAddresses,
   parseEntryIntervalQuery,
+  parseWinnerTicketQuery,
   readLedgerPayload,
 } from './raffle-ledger-api.mjs'
 import { readIdentityIndex, resolveIdentityQuery, suggestIdentityQueries } from './identity-lookup.mjs'
@@ -571,6 +573,48 @@ const server = createServer(async (request, response) => {
         200,
         {
           suggestions: suggestIdentityQueries(readIdentityIndexForApi(), query, limit),
+        },
+        {
+          'cache-control': 'no-store',
+          'access-control-allow-origin': '*',
+        },
+      )
+    } catch (error) {
+      sendLedgerApiError(request, response, error)
+    }
+    return
+  }
+
+  if (url.pathname === '/api/draw-winner-lookup') {
+    try {
+      const ledger = readLedgerPayload(ledgerPath)
+      const requestedLedgerHash = String(url.searchParams.get('ledgerHash') || '').trim().toLowerCase()
+      const currentLedgerHash = String(ledger.ledgerHash || '').trim().toLowerCase()
+      if (requestedLedgerHash && currentLedgerHash && requestedLedgerHash !== currentLedgerHash) {
+        sendJson(
+          request,
+          response,
+          409,
+          {
+            error: 'ledgerHash does not match the locked raffle ledger',
+            ledgerHash: ledger.ledgerHash || null,
+          },
+          {
+            'cache-control': 'no-store',
+            'access-control-allow-origin': '*',
+          },
+        )
+        return
+      }
+
+      const winnerTickets = parseWinnerTicketQuery(url.searchParams)
+      sendJson(
+        request,
+        response,
+        200,
+        {
+          ledger: buildDrawWinnerLookupLedger(ledger, winnerTickets),
+          requested: winnerTickets.length,
         },
         {
           'cache-control': 'no-store',

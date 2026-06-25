@@ -158,6 +158,87 @@ export function findLedgerEntryByAddresses(ledger, addresses) {
   )
 }
 
+function ticketNumber(value) {
+  const number = Number(value || 0)
+  return Number.isSafeInteger(number) && number > 0 ? number : 0
+}
+
+export function parseWinnerTicketQuery(searchParams) {
+  const rawTickets = String(searchParams.get('tickets') || '')
+  return rawTickets
+    .split(',')
+    .map((item) => {
+      const [rawSlotIndex, rawTicket] = item.split(':')
+      const slotIndex = Number(rawSlotIndex)
+      const ticket = ticketNumber(rawTicket)
+      if (!Number.isInteger(slotIndex) || slotIndex < 0 || !ticket) return null
+      return { slotIndex, ticket }
+    })
+    .filter(Boolean)
+}
+
+function ticketIntervalsForTicket(entry, ticket) {
+  const intervals = Array.isArray(entry?.ticketIntervals) ? entry.ticketIntervals : []
+  return intervals.filter((interval) => {
+    const start = ticketNumber(interval?.start)
+    const end = ticketNumber(interval?.end)
+    return start > 0 && end >= start && ticket >= start && ticket <= end
+  })
+}
+
+export function findLedgerEntryByTicket(ledger, ticket) {
+  if (!ticket || !Array.isArray(ledger.entries)) return null
+  return ledger.entries.find((entry) => ticketIntervalsForTicket(entry, ticket).length > 0) || null
+}
+
+export function buildDrawWinnerLookupLedger(ledger, winnerTickets) {
+  const entriesByAddress = new Map()
+
+  for (const winner of Array.isArray(winnerTickets) ? winnerTickets : []) {
+    const ticket = ticketNumber(winner?.ticket)
+    if (!ticket) continue
+    const entry = findLedgerEntryByTicket(ledger, ticket)
+    if (!entry?.userAddress) continue
+
+    const addressKey = String(entry.userAddress).toLowerCase()
+    const existing = entriesByAddress.get(addressKey)
+    const ticketIntervals = ticketIntervalsForTicket(entry, ticket)
+    if (existing) {
+      existing.ticketIntervals = [...existing.ticketIntervals, ...ticketIntervals]
+      continue
+    }
+
+    entriesByAddress.set(addressKey, {
+      ...entry,
+      ticketIntervals,
+    })
+  }
+
+  const entries = Array.from(entriesByAddress.values()).map((entry) => ({
+    ...entry,
+    ticketIntervals: Array.from(
+      new Map(
+        entry.ticketIntervals.map((interval) => [
+          [
+            interval.start,
+            interval.end,
+            interval.namespace || '',
+            interval.source || '',
+            interval.pack || '',
+            interval.txHash || '',
+          ].join(':'),
+          interval,
+        ]),
+      ).values(),
+    ),
+  }))
+
+  return {
+    ...buildLedgerSummary(ledger),
+    entries,
+  }
+}
+
 export function parseEntryIntervalQuery(searchParams) {
   const hasLimit = searchParams.has('intervalLimit')
   const includeAll = searchParams.get('intervalLimit') === 'all'

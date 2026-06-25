@@ -17,7 +17,13 @@ import { WalletSelectorModal } from './components/WalletSelectorModal'
 import { DrawTransactionTimeline } from './components/DrawTransactionTimeline'
 import { initializeAnalytics, trackEvent, trackPageView } from './lib/analytics'
 import { COPY, LANGUAGES, type LanguageCode } from './lib/i18n'
-import { loadFullRaffleLedger, loadIdentitySuggestions, loadRaffleEntry, loadRaffleLedger } from './lib/ticketing/openMonitor'
+import {
+  loadDrawWinnerLookupLedger,
+  loadFullRaffleLedger,
+  loadIdentitySuggestions,
+  loadRaffleEntry,
+  loadRaffleLedger,
+} from './lib/ticketing/openMonitor'
 import { loadWalletIdentities, type WalletIdentityMap } from './lib/ticketing/identities'
 import type { RaffleEntry, RaffleLedger } from './lib/ticketing/types'
 import {
@@ -71,6 +77,12 @@ interface DrawEventHistoryState {
   error: string
 }
 
+interface DrawWinnerLookupState {
+  key: string
+  ledger: RaffleLedger | null
+  error: string
+}
+
 const ContractDetails = lazy(() => import('./components/ContractDetails').then((module) => ({ default: module.ContractDetails })))
 const DrawAdminPanel = lazy(() => import('./components/DrawAdminPanel').then((module) => ({ default: module.DrawAdminPanel })))
 const DrawReveal = lazy(() => import('./components/DrawReveal').then((module) => ({ default: module.DrawReveal })))
@@ -83,7 +95,7 @@ const FULL_LEDGER_PRELOAD_DELAY_MS = 150
 const INITIAL_LOADER_MIN_VISIBLE_MS = 1100
 const INITIAL_LOADER_EXIT_MS = 540
 const SECRET_DRAW_UNLOCK_CLICKS = 3
-const DRAW_LEDGER_URI = '/lucky-draw-ledger.json'
+const DRAW_LEDGER_URI = import.meta.env.VITE_LEDGER_URL || '/lucky-draw-ledger.json'
 const VRF_STATUS_FAST_POLL_MS = 1200
 const VRF_STATUS_SLOW_POLL_MS = 3000
 const VRF_STATUS_FAST_POLL_COUNT = 30
@@ -309,6 +321,15 @@ function drawEventHistoryKey(
   ].join(':')
 }
 
+function drawWinnerLookupKey(networkKey: DrawNetworkKey, ledgerHash: string, winnerTicketsBySlot: readonly bigint[]) {
+  const winners = winnerTicketsBySlot
+    .map((ticket, slotIndex) => (ticket > 0n ? `${slotIndex}:${ticket.toString()}` : ''))
+    .filter(Boolean)
+    .join(',')
+  if (!ledgerHash || ledgerHash === EMPTY_LEDGER_HASH || !winners) return ''
+  return [networkKey, ledgerHash.toLowerCase(), winners].join(':')
+}
+
 function pageFromHash(hash: string): PageKey | null {
   const key = hash.replace(/^#/, '')
   return PUBLIC_NAV_ITEMS.includes(key as PageKey) || key === 'draw' ? (key as PageKey) : null
@@ -334,6 +355,7 @@ export default function App() {
   const [drawTxRecordsByNetwork, setDrawTxRecordsByNetwork] = useState<DrawTransactionRecordsByNetwork>(() => readStoredDrawTransactions())
   const [drawVrfTimingByNetwork, setDrawVrfTimingByNetwork] = useState<DrawVrfTimingByNetwork>({})
   const [drawEventHistoryByNetwork, setDrawEventHistoryByNetwork] = useState<Partial<Record<DrawNetworkKey, DrawEventHistoryState>>>({})
+  const [drawWinnerLookupByNetwork, setDrawWinnerLookupByNetwork] = useState<Partial<Record<DrawNetworkKey, DrawWinnerLookupState>>>({})
   const [drawMessage, setDrawMessage] = useState('')
   const [drawBusy, setDrawBusy] = useState<DrawBusyState>(null)
   const [walletIdentities, setWalletIdentities] = useState<WalletIdentityMap>({})
@@ -353,11 +375,12 @@ export default function App() {
   const [initialLoaderStartedAt] = useState(() => Date.now())
   const drawUnlockHitsRef = useRef(0)
   const drawEventHistoryRequestKeyRef = useRef('')
+  const drawWinnerLookupRequestKeyRef = useRef('')
   const entryRequestRef = useRef(0)
   const fullLedgerPreloadKeyRef = useRef('')
   const copy = COPY[language]
   const activePage: PageKey = page
-  const needsFullLedger = activePage === 'simulator' || activePage === 'draw'
+  const needsFullLedger = activePage === 'simulator'
   const summaryLedgerKey = ledgerCacheKey(ledger)
   const fullLedgerKey = ledgerCacheKey(fullLedger)
   const fullLedgerIsCurrent = Boolean(fullLedger && (!summaryLedgerKey || !fullLedgerKey || summaryLedgerKey === fullLedgerKey))
@@ -369,19 +392,25 @@ export default function App() {
   const activeWinnerTicketsBySlot = activeStoredDrawStatus?.winnerTicketsBySlot ?? EMPTY_WINNER_TICKETS
   const activeReserveTicketsBySlot = activeStoredDrawStatus?.reserveTicketsBySlot ?? EMPTY_RESERVE_TICKETS
   const activeRevealedPrizeSlots = activeStoredDrawStatus?.revealedPrizeSlots ?? EMPTY_WINNER_TICKETS
+  const activeDrawWinnerLookupKey = drawWinnerLookupKey(activeDrawNetworkKey, activeStoredDrawStatus?.ledgerHash ?? '', activeWinnerTicketsBySlot)
+  const activeDrawWinnerLookupState = drawWinnerLookupByNetwork[activeDrawNetworkKey]
+  const activeDrawWinnerLookupLedger =
+    activeDrawWinnerLookupState?.key === activeDrawWinnerLookupKey ? activeDrawWinnerLookupState.ledger : null
+  const drawLookupLedger = currentFullLedger ?? activeDrawWinnerLookupLedger ?? ledger
+  const winnerExportLedger = currentFullLedger ?? activeDrawWinnerLookupLedger
   const winnerListExportText = useMemo(
     () =>
-      currentFullLedger
+      winnerExportLedger
         ? buildWinnerListExportText({
           identities: walletIdentities,
-          ledger: currentFullLedger,
+          ledger: winnerExportLedger,
           noWalletName: copy.drawReveal.noWalletName,
           notConnected: copy.drawReveal.notConnected,
           unknownWinner: copy.drawReveal.unknownWinner,
           winnerTicketsBySlot: activeWinnerTicketsBySlot,
         })
         : '',
-    [activeWinnerTicketsBySlot, copy.drawReveal.noWalletName, copy.drawReveal.notConnected, copy.drawReveal.unknownWinner, currentFullLedger, walletIdentities],
+    [activeWinnerTicketsBySlot, copy.drawReveal.noWalletName, copy.drawReveal.notConnected, copy.drawReveal.unknownWinner, walletIdentities, winnerExportLedger],
   )
   const winnerListExportCount = winnerListExportText ? winnerListExportText.trim().split(/\n{2,}/).length : 0
   const activeDrawStatus = activeStoredDrawStatus
@@ -537,6 +566,65 @@ export default function App() {
       }
     }
   }, [activeDrawEventHistoryKey, activeDrawLedgerHash, activeDrawNetworkKey, activePage])
+
+  useEffect(() => {
+    if (activePage !== 'draw' || !activeDrawWinnerLookupKey || !activeDrawLedgerHash) return undefined
+    if (
+      activeDrawWinnerLookupState?.key === activeDrawWinnerLookupKey &&
+      (activeDrawWinnerLookupState.ledger || activeDrawWinnerLookupState.error)
+    ) {
+      return undefined
+    }
+    if (drawWinnerLookupRequestKeyRef.current === activeDrawWinnerLookupKey) return undefined
+
+    const ticketsBySlot = activeWinnerTicketsBySlot
+      .map((ticket, slotIndex) => (ticket > 0n ? { slotIndex, ticket } : null))
+      .filter((item): item is { slotIndex: number; ticket: bigint } => Boolean(item))
+    if (ticketsBySlot.length === 0) return undefined
+
+    drawWinnerLookupRequestKeyRef.current = activeDrawWinnerLookupKey
+
+    void loadDrawWinnerLookupLedger({
+      ledgerHash: activeDrawLedgerHash,
+      ticketsBySlot,
+    })
+      .then((value) => {
+        setDrawWinnerLookupByNetwork((current) => ({
+          ...current,
+          [activeDrawNetworkKey]: {
+            key: activeDrawWinnerLookupKey,
+            ledger: value,
+            error: '',
+          },
+        }))
+      })
+      .catch((error) => {
+        setDrawWinnerLookupByNetwork((current) => ({
+          ...current,
+          [activeDrawNetworkKey]: {
+            key: activeDrawWinnerLookupKey,
+            ledger: null,
+            error: error instanceof Error ? error.message : 'Could not resolve draw winner addresses.',
+          },
+        }))
+      })
+      .finally(() => {
+        if (drawWinnerLookupRequestKeyRef.current === activeDrawWinnerLookupKey) {
+          drawWinnerLookupRequestKeyRef.current = ''
+        }
+      })
+
+    return () => {
+      // Keep the in-flight request alive so a harmless re-render does not cancel the lookup.
+    }
+  }, [
+    activeDrawLedgerHash,
+    activeDrawNetworkKey,
+    activeDrawWinnerLookupKey,
+    activeDrawWinnerLookupState?.key,
+    activePage,
+    activeWinnerTicketsBySlot,
+  ])
 
   useEffect(() => {
     initializeAnalytics()
@@ -1681,24 +1769,7 @@ export default function App() {
           </>
         )}
 
-        {activePage === 'draw' && fullLedgerError && (
-          <section className="notice">
-            <AlertTriangle size={20} />
-            <div>
-              <strong>Could not load full raffle ledger</strong>
-              <span>{fullLedgerError}</span>
-            </div>
-          </section>
-        )}
-
-        {activePage === 'draw' && !fullLedgerError && !currentFullLedger && (
-          <main className="app-shell centered">
-            <Loader2 className="spin" size={34} />
-            <p>Loading full raffle ledger...</p>
-          </main>
-        )}
-
-        {activePage === 'draw' && currentFullLedger && (
+        {activePage === 'draw' && drawLookupLedger && (
           <>
             <PageHeader
               eyebrow={copy.draw.eyebrow}
@@ -1712,8 +1783,8 @@ export default function App() {
                 winnerTicketsBySlot={activeWinnerTicketsBySlot}
                 reserveTicketsBySlot={activeReserveTicketsBySlot}
                 revealedPrizeSlots={activeRevealedPrizeSlots}
-                totalTickets={currentFullLedger.totalFinalTickets}
-                ledger={currentFullLedger}
+                totalTickets={drawLookupLedger.totalFinalTickets}
+                ledger={drawLookupLedger}
                 walletIdentities={walletIdentities}
                 copy={copy}
                 drawStatus={activeDrawStatus}
@@ -1765,8 +1836,8 @@ export default function App() {
                 wallet={wallet}
                 status={activeDrawStatus}
                 message={drawMessage}
-                ledgerTotalTickets={currentFullLedger.totalFinalTickets}
-                ledgerHash={currentFullLedger.ledgerHash}
+                ledgerTotalTickets={drawLookupLedger.totalFinalTickets}
+                ledgerHash={drawLookupLedger.ledgerHash}
                 prizeSlotCount={TOTAL_PRIZE_DRAW_SLOTS}
                 vrfTiming={activeDrawVrfTiming}
                 authorizedOperatorAddress={activeDrawStatus?.drawOperatorAddress ?? activeDrawNetwork.authorizedOperatorAddress}
@@ -1774,7 +1845,7 @@ export default function App() {
                 isContractOwner={isActiveContractOwner}
                 copy={copy}
               />
-              <ContractDetails ledger={currentFullLedger} network={activeDrawNetwork} copy={copy} />
+              <ContractDetails ledger={drawLookupLedger} network={activeDrawNetwork} copy={copy} />
               <section className="draw-support-panel">
                 <article className="draw-support-card draw-support-card--media">
                   <img src={liveDrawImage} alt="Van Gogh live draw machine artwork" decoding="async" loading="lazy" />

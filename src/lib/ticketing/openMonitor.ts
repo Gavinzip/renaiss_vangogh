@@ -6,10 +6,12 @@ const FULL_LEDGER_URL = import.meta.env.VITE_LEDGER_URL || '/lucky-draw-ledger.j
 const IDENTITY_SUGGESTIONS_URL = '/api/identity-suggestions'
 const RAFFLE_ENTRY_URL = '/api/raffle-entry'
 const RAFFLE_SUMMARY_URL = '/api/raffle-summary'
+const DRAW_WINNER_LOOKUP_URL = '/api/draw-winner-lookup'
 const OPEN_MONITOR_LUCKY_DRAW_URL = '/open-monitor-api/lucky-draw/leaderboard'
 const SUMMARY_READ_TIMEOUT_MS = 15_000
 const FULL_LEDGER_READ_TIMEOUT_MS = 45_000
 const ENTRY_READ_TIMEOUT_MS = 15_000
+const DRAW_WINNER_LOOKUP_TIMEOUT_MS = 15_000
 
 let fullLedgerCache: RaffleLedger | null = null
 let fullLedgerCacheKey = ''
@@ -29,6 +31,14 @@ type ReadJsonOptions = {
 type FullLedgerOptions = {
   force?: boolean
   version?: string
+}
+
+type DrawWinnerLookupOptions = {
+  ledgerHash?: string
+  ticketsBySlot: readonly {
+    slotIndex: number
+    ticket: bigint | string
+  }[]
 }
 
 function versionedUrl(url: string, version = '') {
@@ -117,6 +127,25 @@ export async function loadRaffleEntry(query: string, options: RaffleEntryRequest
     entry?: RaffleEntry | null
   }
   return payload.entry ?? null
+}
+
+export async function loadDrawWinnerLookupLedger({ ledgerHash = '', ticketsBySlot }: DrawWinnerLookupOptions): Promise<RaffleLedger> {
+  const tickets = ticketsBySlot
+    .map(({ slotIndex, ticket }) => `${Math.floor(slotIndex)}:${ticket.toString()}`)
+    .join(',')
+  if (!tickets) throw new Error('No winner tickets to resolve.')
+
+  const params = new URLSearchParams({ tickets })
+  if (ledgerHash) params.set('ledgerHash', ledgerHash)
+
+  const payload = (await readJson(`${DRAW_WINNER_LOOKUP_URL}?${params.toString()}`, {
+    timeoutMs: DRAW_WINNER_LOOKUP_TIMEOUT_MS,
+  })) as {
+    ledger?: unknown
+  }
+  const ledger = normalizeLoadedLedger(payload.ledger)
+  if (!ledger) throw new Error('Winner lookup ledger is missing or invalid.')
+  return ledger
 }
 
 export async function loadIdentitySuggestions(query: string, limit = 8): Promise<IdentitySuggestion[]> {
