@@ -20,6 +20,8 @@ export type AnalyticsEventName =
   | 'wallet_connect'
   | 'wallet_connect_result'
   | 'wallet_disconnect'
+  | 'wallet_switch_network'
+  | 'wallet_switch_network_result'
 
 declare global {
   interface Window {

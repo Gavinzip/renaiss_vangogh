@@ -17,10 +17,10 @@ export interface DrawNetworkConfig {
   vrfCoordinatorAddress: string
 }
 
-const DEFAULT_MAINNET_CONTRACT_ADDRESS = '0x0C7c73F527D407aA6AEB8721F7C30C6b2AAF5484'
-const DEFAULT_TESTNET_CONTRACT_ADDRESS = '0x01970483eC82b666F4E1c5824D9aB5DE1797d372'
-const DEFAULT_MAINNET_CONTRACT_DEPLOYMENT_BLOCK = 104218834
-const DEFAULT_TESTNET_CONTRACT_DEPLOYMENT_BLOCK = 113363119
+const DEFAULT_MAINNET_CONTRACT_ADDRESS = '0x856bb4743b5160e7eeCeb6b637B42d9412478573'
+const DEFAULT_TESTNET_CONTRACT_ADDRESS = '0x620DEeD565bbb4044Cd988661852Bd99a5Cb7b9D'
+const DEFAULT_MAINNET_CONTRACT_DEPLOYMENT_BLOCK = 108159872
+const DEFAULT_TESTNET_CONTRACT_DEPLOYMENT_BLOCK = 117304260
 const DEFAULT_AUTHORIZED_OPERATOR_ADDRESS = '0x88b620388698490764fd85cfa482b5e3a8ad63b5'
 const BSC_MAINNET_BINANCE_VRF_COORDINATOR = '0x9632ADE542f12114f5E5AD4d6F8e47fB993955da'
 const BSC_TESTNET_BINANCE_VRF_COORDINATOR = '0xa2d23627bC0314f4Cbd08Ff54EcB89bb45685053'
@@ -35,14 +35,42 @@ export function isAuthorizedDrawOperator(walletAddress: string | null | undefine
   return sameAddress(walletAddress, network.authorizedOperatorAddress)
 }
 
+function envValue(...keys: string[]) {
+  for (const key of keys) {
+    const value = import.meta.env[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return ''
+}
+
+function envAddress(fallback: string, ...keys: string[]) {
+  const value = envValue(...keys)
+  if (!value) return fallback
+  return /^0x[a-fA-F0-9]{40}$/.test(value) ? value : fallback
+}
+
+function envBlock(fallback: number, ...keys: string[]) {
+  const value = Number(envValue(...keys))
+  return Number.isSafeInteger(value) && value >= 0 ? value : fallback
+}
+
 export const DRAW_NETWORKS: Record<DrawNetworkKey, DrawNetworkConfig> = {
   testnet: {
     key: 'testnet',
     label: 'BSC Testnet',
     chainId: 97n,
     chainName: 'BNB Smart Chain Testnet',
-    contractAddress: DEFAULT_TESTNET_CONTRACT_ADDRESS,
-    deploymentBlock: DEFAULT_TESTNET_CONTRACT_DEPLOYMENT_BLOCK,
+    contractAddress: envAddress(
+      DEFAULT_TESTNET_CONTRACT_ADDRESS,
+      'VITE_LUCKY_DRAW_TESTNET_ADDRESS',
+      'VITE_DRAW_CONTRACT_TESTNET',
+      'VITE_DRAW_CONTRACT_ADDRESS_TESTNET',
+    ),
+    deploymentBlock: envBlock(
+      DEFAULT_TESTNET_CONTRACT_DEPLOYMENT_BLOCK,
+      'VITE_LUCKY_DRAW_TESTNET_DEPLOYMENT_BLOCK',
+      'VITE_DRAW_CONTRACT_TESTNET_DEPLOYMENT_BLOCK',
+    ),
     authorizedOperatorAddress: DEFAULT_AUTHORIZED_OPERATOR_ADDRESS,
     explorerName: 'BscScan Testnet',
     logRpcUrls: ['https://bsc-testnet-rpc.publicnode.com'],
@@ -56,8 +84,18 @@ export const DRAW_NETWORKS: Record<DrawNetworkKey, DrawNetworkConfig> = {
     label: 'BSC Mainnet',
     chainId: 56n,
     chainName: 'BNB Smart Chain',
-    contractAddress: DEFAULT_MAINNET_CONTRACT_ADDRESS,
-    deploymentBlock: DEFAULT_MAINNET_CONTRACT_DEPLOYMENT_BLOCK,
+    contractAddress: envAddress(
+      DEFAULT_MAINNET_CONTRACT_ADDRESS,
+      'VITE_LUCKY_DRAW_MAINNET_ADDRESS',
+      'VITE_DRAW_CONTRACT_MAINNET',
+      'VITE_DRAW_CONTRACT_ADDRESS_MAINNET',
+      'VITE_DRAW_CONTRACT',
+    ),
+    deploymentBlock: envBlock(
+      DEFAULT_MAINNET_CONTRACT_DEPLOYMENT_BLOCK,
+      'VITE_LUCKY_DRAW_MAINNET_DEPLOYMENT_BLOCK',
+      'VITE_DRAW_CONTRACT_MAINNET_DEPLOYMENT_BLOCK',
+    ),
     authorizedOperatorAddress: DEFAULT_AUTHORIZED_OPERATOR_ADDRESS,
     explorerName: 'BscScan',
     logRpcUrls: ['https://bsc-rpc.publicnode.com'],

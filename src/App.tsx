@@ -39,6 +39,7 @@ import {
   drawNextWinner,
   drawPrizeSlotWinner,
   drawPrizeSlotWinners,
+  ensureBscNetwork,
   finalizeContractLedger,
   makeDrawStatusSerializable,
   readConnectedWallet,
@@ -103,14 +104,12 @@ const INITIAL_PRELOAD_ASSETS = [renaissLogo, heroBackgroundImage, holoCardFrontI
 const DRAW_TX_STORAGE_KEY = 'renaiss-draw-transactions-v1'
 const DRAW_UNLOCK_SESSION_KEY = 'renaiss-draw-unlocked-v1'
 const EMPTY_LEDGER_HASH = `0x${'0'.repeat(64)}`
-const DRAW_MAINNET_ONLY_START_AT = '2026-06-15T00:00:00+08:00'
-const DRAW_MAINNET_ONLY_START_MS = Date.parse(DRAW_MAINNET_ONLY_START_AT)
 const DRAW_WINNER_LIST_ONLY = true
 const EMPTY_WINNER_TICKETS: bigint[] = []
 const EMPTY_RESERVE_TICKETS: bigint[][] = []
 
 const PUBLIC_NAV_ITEMS: PageKey[] = ['tickets', 'rules', 'simulator', 'draw']
-type DrawBusyState = 'connect' | 'read' | 'reset' | 'finalize' | 'draw' | 'drawNext' | null
+type DrawBusyState = 'connect' | 'switchNetwork' | 'read' | 'reset' | 'finalize' | 'draw' | 'drawNext' | null
 
 function readStoredDrawTransactions(): DrawTransactionRecordsByNetwork {
   if (typeof window === 'undefined') return {}
@@ -147,7 +146,8 @@ function writeStoredDrawUnlocked(value: boolean) {
 }
 
 function readMainnetOnlyDrawMode() {
-  return Date.now() >= DRAW_MAINNET_ONLY_START_MS
+  const value = import.meta.env.VITE_DRAW_MAINNET_ONLY
+  return value === '1' || value === 'true'
 }
 
 function createTransactionId(kind: DrawTransactionKind): string {
@@ -350,7 +350,7 @@ export default function App() {
   const [page, setPage] = useState<PageKey>(() => initialPageFromLocation())
   const [wallet, setWallet] = useState<ConnectedWallet | null>(null)
   const [walletError, setWalletError] = useState('')
-  const [drawRunMode, setDrawRunMode] = useState<DrawRunMode>('showcase')
+  const [drawRunMode, setDrawRunMode] = useState<DrawRunMode>('mainnet')
   const [drawStatusByNetwork, setDrawStatusByNetwork] = useState<Partial<Record<DrawNetworkKey, DrawStatus>>>({})
   const [drawTxRecordsByNetwork, setDrawTxRecordsByNetwork] = useState<DrawTransactionRecordsByNetwork>(() => readStoredDrawTransactions())
   const [drawVrfTimingByNetwork, setDrawVrfTimingByNetwork] = useState<DrawVrfTimingByNetwork>({})
@@ -872,7 +872,7 @@ export default function App() {
       setDrawBusy((current) => (current === 'read' ? null : current))
       trackEvent('draw_run_mode_change', {
         mode: 'mainnet',
-        locked_after: DRAW_MAINNET_ONLY_START_AT,
+        locked_by_env: 'VITE_DRAW_MAINNET_ONLY',
       })
       return
     }
@@ -1204,6 +1204,51 @@ export default function App() {
         })
       }
       setWalletError(error instanceof Error ? error.message : copy.walletPanel.connectionFailed)
+    } finally {
+      setDrawBusy(null)
+    }
+  }
+
+  async function switchWalletNetwork(networkKey = activeDrawNetworkKey) {
+    if (!wallet) {
+      openWalletSelector(networkKey)
+      return
+    }
+
+    const walletProvider = wallet.injectedProvider ?? selectedWalletProvider?.provider
+    if (!walletProvider) {
+      setWalletError(copy.walletPanel.connectionFailed)
+      return
+    }
+
+    setWalletError('')
+    setDrawMessage('')
+    setDrawBusy('switchNetwork')
+    trackEvent('wallet_switch_network', {
+      network: networkKey,
+      provider: selectedWalletProvider?.name ?? wallet.walletName ?? '',
+    })
+
+    try {
+      await ensureBscNetwork(walletProvider, networkKey)
+      const nextWallet = await readConnectedWallet(walletProvider, wallet.walletName ?? selectedWalletProvider?.name)
+      if (!nextWallet) throw new Error(copy.walletPanel.connectFirst)
+      setWallet(nextWallet)
+      setPage('draw')
+      await readStatusForNetwork(networkKey, nextWallet)
+      setDrawMessage(`${copy.walletPanel.switchNetwork}: ${copy.walletPanel.statusUpdated}`)
+      trackEvent('wallet_switch_network_result', {
+        network: networkKey,
+        status: 'success',
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : copy.walletPanel.switchNetworkFailed
+      setWalletError(message)
+      setDrawMessage(message)
+      trackEvent('wallet_switch_network_result', {
+        network: networkKey,
+        status: 'error',
+      })
     } finally {
       setDrawBusy(null)
     }
@@ -1843,6 +1888,11 @@ export default function App() {
                 authorizedOperatorAddress={activeDrawStatus?.drawOperatorAddress ?? activeDrawNetwork.authorizedOperatorAddress}
                 isAuthorizedOperator={isActiveAuthorizedOperator}
                 isContractOwner={isActiveContractOwner}
+                isConnectingWallet={drawBusy === 'connect'}
+                isSwitchingNetwork={drawBusy === 'switchNetwork'}
+                onConnectWallet={() => openWalletSelector(activeDrawNetworkKey)}
+                onSelectNetwork={(networkKey) => handleDrawRunModeChange(networkKey)}
+                onSwitchNetwork={() => switchWalletNetwork(activeDrawNetworkKey)}
                 copy={copy}
               />
               <ContractDetails ledger={drawLookupLedger} network={activeDrawNetwork} copy={copy} />

@@ -87,6 +87,8 @@ const DRAW_STATUS_CORE_READ_TIMEOUT_MS = 8000
 const CONTRACT_WRITE_GAS_BUFFER_BPS = 13_000n
 const GAS_BPS_DENOMINATOR = 10_000n
 const VRF_SUBSCRIPTION_READ_TIMEOUT_MS = 2500
+const CHAIN_SWITCH_CONFIRM_ATTEMPTS = 12
+const CHAIN_SWITCH_CONFIRM_DELAY_MS = 250
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -186,6 +188,55 @@ async function requestWalletProvider(provider: WalletRequestProvider, method: st
 
 async function readInjectedChainId(provider?: WalletRequestProvider): Promise<bigint> {
   return parseInjectedChainId(await requestWalletProvider(provider, 'eth_chainId'))
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => globalThis.setTimeout(resolve, ms))
+}
+
+function walletErrorCode(error: unknown): number | null {
+  if (!error || typeof error !== 'object') return null
+  const record = error as Record<string, unknown>
+  const rawCode = record.code
+  if (typeof rawCode === 'number') return rawCode
+  if (typeof rawCode === 'string') {
+    const parsedCode = Number(rawCode)
+    if (Number.isFinite(parsedCode)) return parsedCode
+  }
+
+  return (
+    walletErrorCode(record.data) ??
+    walletErrorCode(record.error) ??
+    walletErrorCode(record.cause) ??
+    walletErrorCode((record.data as Record<string, unknown> | undefined)?.originalError)
+  )
+}
+
+function walletErrorMessage(error: unknown): string {
+  if (!error || typeof error !== 'object') return ''
+  const record = error as Record<string, unknown>
+  const message = typeof record.message === 'string' ? record.message : ''
+  const nestedMessages = [
+    walletErrorMessage(record.data),
+    walletErrorMessage(record.error),
+    walletErrorMessage(record.cause),
+    walletErrorMessage((record.data as Record<string, unknown> | undefined)?.originalError),
+  ].filter(Boolean)
+  return [message, ...nestedMessages].join(' ')
+}
+
+function isUnknownChainError(error: unknown) {
+  const code = walletErrorCode(error)
+  if (code === 4902) return true
+  return /4902|unrecognized chain|unknown chain|not added|not found/i.test(walletErrorMessage(error))
+}
+
+async function waitForInjectedChainId(provider: WalletRequestProvider, expectedChainId: bigint) {
+  for (let attempt = 0; attempt < CHAIN_SWITCH_CONFIRM_ATTEMPTS; attempt += 1) {
+    if (await readInjectedChainId(provider) === expectedChainId) return true
+    await wait(CHAIN_SWITCH_CONFIRM_DELAY_MS)
+  }
+  return false
 }
 
 function createReadOnlyProvider(networkKey: DrawNetworkKey) {
@@ -492,8 +543,7 @@ export async function ensureBscNetwork(provider: WalletRequestProvider, networkK
   try {
     await requestWalletProvider(provider, 'wallet_switchEthereumChain', [{ chainId: hexChainId }])
   } catch (error) {
-    const code = typeof error === 'object' && error && 'code' in error ? Number(error.code) : 0
-    if (code !== 4902) {
+    if (!isUnknownChainError(error)) {
       throw new Error(`Please switch wallet network to ${expectedNetwork.chainName}.`, {
         cause: error,
       })
@@ -507,11 +557,12 @@ export async function ensureBscNetwork(provider: WalletRequestProvider, networkK
         blockExplorerUrls: expectedNetwork.blockExplorerUrls,
       },
     ])
-    await requestWalletProvider(provider, 'wallet_switchEthereumChain', [{ chainId: hexChainId }])
+    if (!(await waitForInjectedChainId(provider, expectedNetwork.chainId))) {
+      await requestWalletProvider(provider, 'wallet_switchEthereumChain', [{ chainId: hexChainId }])
+    }
   }
 
-  const nextChainId = await readInjectedChainId(provider)
-  if (nextChainId !== expectedNetwork.chainId) {
+  if (!(await waitForInjectedChainId(provider, expectedNetwork.chainId))) {
     throw new Error(`Please switch wallet network to ${expectedNetwork.chainName}.`)
   }
 }

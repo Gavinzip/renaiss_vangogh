@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { LockKeyhole } from 'lucide-react'
-import type { DrawNetworkConfig } from '../lib/contracts/luckyDrawNetworks'
+import { Loader2, LockKeyhole, Network, Wallet } from 'lucide-react'
+import { DRAW_NETWORKS, type DrawNetworkConfig, type DrawNetworkKey } from '../lib/contracts/luckyDrawNetworks'
 import type { AppCopy } from '../lib/i18n'
 import { compactNumber, formatDrawTicketNumber } from '../lib/ticketing/display'
 import { formatAddress } from '../lib/ticketing/rules'
@@ -24,6 +24,11 @@ export function WalletPanel({
   authorizedOperatorAddress,
   isAuthorizedOperator,
   isContractOwner,
+  isConnectingWallet,
+  isSwitchingNetwork,
+  onConnectWallet,
+  onSelectNetwork,
+  onSwitchNetwork,
 }: {
   network: DrawNetworkConfig
   wallet: ConnectedWallet | null
@@ -37,6 +42,11 @@ export function WalletPanel({
   authorizedOperatorAddress: string
   isAuthorizedOperator: boolean
   isContractOwner: boolean
+  isConnectingWallet: boolean
+  isSwitchingNetwork: boolean
+  onConnectWallet: () => void
+  onSelectNetwork: (networkKey: DrawNetworkKey) => void
+  onSwitchNetwork: () => void
 }) {
   const [clockNow, setClockNow] = useState(() => Date.now())
   const drawState = status
@@ -105,6 +115,22 @@ export function WalletPanel({
         </small>
       </div>
 
+      <div className="wallet-network-tabs" role="tablist" aria-label={copy.drawReveal.currentNetwork}>
+        {(['testnet', 'mainnet'] as DrawNetworkKey[]).map((networkKey) => (
+          <button
+            className={network.key === networkKey ? 'is-active' : ''}
+            disabled={isConnectingWallet || isSwitchingNetwork}
+            key={networkKey}
+            type="button"
+            role="tab"
+            aria-selected={network.key === networkKey}
+            onClick={() => onSelectNetwork(networkKey)}
+          >
+            {DRAW_NETWORKS[networkKey].label}
+          </button>
+        ))}
+      </div>
+
       <div className="wallet-actions-head">
         <span>{copy.walletPanel.statusPanel}</span>
         <strong>{drawState}</strong>
@@ -129,6 +155,20 @@ export function WalletPanel({
         </div>
       ) : (
         <p className="wallet-status-preview">{copy.walletPanel.statusPreview}</p>
+      )}
+
+      {!wallet && (
+        <button className="wallet-network-switch" type="button" disabled={isConnectingWallet} onClick={onConnectWallet}>
+          {isConnectingWallet ? <Loader2 className="spin" size={16} /> : <Wallet size={16} />}
+          <span>{copy.walletPanel.connectBsc}</span>
+        </button>
+      )}
+
+      {wallet && !isWalletOnSelectedNetwork && (
+        <button className="wallet-network-switch" type="button" disabled={isSwitchingNetwork} onClick={onSwitchNetwork}>
+          {isSwitchingNetwork ? <Loader2 className="spin" size={16} /> : <Network size={16} />}
+          <span>{copy.walletPanel.switchToNetwork.replace('{network}', network.label)}</span>
+        </button>
       )}
 
       {wallet && status && !isAuthorizedOperator && (

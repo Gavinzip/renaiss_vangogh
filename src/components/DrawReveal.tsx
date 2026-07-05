@@ -1222,11 +1222,6 @@ export function DrawReveal({
                 aria-label={copy.drawReveal.runMode}
               >
                 {!isMainnetOnlyMode && (
-                  <button className={runMode === 'showcase' ? 'is-active' : ''} type="button" role="tab" aria-selected={runMode === 'showcase'} onClick={() => selectRunMode('showcase')}>
-                    {copy.drawReveal.showcaseMode}
-                  </button>
-                )}
-                {!isMainnetOnlyMode && (
                   <button className={runMode === 'testnet' ? 'is-active' : ''} type="button" role="tab" aria-selected={runMode === 'testnet'} onClick={() => selectRunMode('testnet')}>
                     {copy.drawReveal.testnetMode}
                   </button>

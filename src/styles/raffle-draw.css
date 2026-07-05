@@ -148,6 +148,38 @@
   white-space: nowrap;
 }
 
+.page-draw .wallet-network-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.18rem;
+  padding: 0.2rem;
+  border: 1px solid rgba(31, 82, 138, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.page-draw .wallet-network-tabs button {
+  min-width: 0;
+  min-height: 36px;
+  padding: 0.3rem 0.45rem;
+  border: 0;
+  border-radius: 9px;
+  color: #536981;
+  background: transparent;
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.page-draw .wallet-network-tabs button.is-active {
+  color: #fff8df;
+  background: #10243d;
+}
+
+.page-draw .wallet-network-tabs button:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
 .page-draw .mini-grid strong.is-warning {
   color: #a65d00;
 }
@@ -344,6 +376,26 @@
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.56);
   line-height: 1.42;
+}
+
+.page-draw .wallet-network-switch {
+  display: inline-flex;
+  gap: 0.48rem;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 0.54rem 0.76rem;
+  border: 1px solid rgba(166, 93, 0, 0.22);
+  border-radius: 12px;
+  color: #7a4400;
+  background: rgba(255, 247, 230, 0.8);
+  font-size: 0.76rem;
+  font-weight: 880;
+}
+
+.page-draw .wallet-network-switch:disabled {
+  cursor: wait;
+  opacity: 0.72;
 }
 
 .page-draw .button-row {
@@ -840,8 +892,8 @@
 
 .page-draw .draw-reveal-mode-switch {
   display: inline-grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  width: 306px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 224px;
   gap: 0.14rem;
   padding: 0.18rem;
   border: 1px solid rgba(31, 82, 138, 0.12);
